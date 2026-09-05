@@ -522,18 +522,20 @@ fn expand_slack(
 pub struct Permissiveness {
     pub depth: usize,
     pub shapes: usize,
+    pub states: usize,
     pub truncated: bool,
 }
 
-pub fn permissiveness(net: &Net, depth: usize, cap: usize) -> Permissiveness {
+pub fn permissiveness(net: &Net, depth: usize, cap: usize, budget: usize) -> Permissiveness {
     let mut shapes: BTreeSet<String> = BTreeSet::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut stack: Vec<(Marking, Vec<String>, usize, usize)> =
         vec![(net.initial.clone(), Vec::new(), 0, 0)];
     let mut truncated = false;
+    let mut states = 0usize;
 
     while let Some((marking, trace, level, fresh)) = stack.pop() {
-        if shapes.len() >= cap {
+        states += 1;
+        if shapes.len() >= cap || states > budget {
             truncated = true;
             break;
         }
@@ -543,10 +545,6 @@ pub fn permissiveness(net: &Net, depth: usize, cap: usize) -> Permissiveness {
             shapes.insert(sorted.join("+"));
         }
         if level >= depth {
-            continue;
-        }
-        let key = format!("{}|{}|{}", net.canonical(&marking), trace.join("+"), level);
-        if !seen.insert(key) {
             continue;
         }
         for transition in &net.transitions {
@@ -585,6 +583,7 @@ pub fn permissiveness(net: &Net, depth: usize, cap: usize) -> Permissiveness {
     Permissiveness {
         depth,
         shapes: shapes.len(),
+        states,
         truncated,
     }
 }

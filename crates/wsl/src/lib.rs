@@ -1,6 +1,9 @@
 pub mod lint;
 pub mod model;
 
+pub mod mutate;
+
+pub use mutate::{apply, mutants, Mutant, Mutation};
 pub use lint::{lint, Diagnostic, LintReport, Severity};
 pub use model::{
     classify, glob_match, BindMode, EffectTemplate, Invariant, InvariantKind, Pattern, Place,

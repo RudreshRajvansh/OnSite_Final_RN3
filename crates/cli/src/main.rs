@@ -39,10 +39,20 @@ enum Command {
         depth: usize,
         #[arg(long, default_value_t = 100_000)]
         cap: usize,
+        #[arg(long, default_value_t = 2_000_000)]
+        budget: usize,
     },
     Check {
         #[arg(long)]
         certificate: PathBuf,
+    },
+    Mutate {
+        #[arg(long, default_value = DEFAULT_SPEC)]
+        spec: PathBuf,
+        #[arg(long)]
+        observation: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        slack: usize,
     },
     Ingest {
         #[arg(long)]
@@ -64,9 +74,19 @@ fn main() -> ExitCode {
             json,
             certificate,
         } => run_verify(spec, observation, slack, json, certificate),
-        Command::Permissiveness { spec, depth, cap } => run_permissiveness(spec, depth, cap),
+        Command::Permissiveness {
+            spec,
+            depth,
+            cap,
+            budget,
+        } => run_permissiveness(spec, depth, cap, budget),
         Command::Check { certificate } => run_check(certificate),
         Command::Ingest { bundle, map, out } => run_ingest(bundle, map, out),
+        Command::Mutate {
+            spec,
+            observation,
+            slack,
+        } => run_mutate(spec, observation, slack),
     }
 }
 
@@ -235,21 +255,147 @@ fn report(
     println!("RUN       {}  sha256:{}", obs.run_id, &obs.hash()[..12]);
 }
 
-fn run_permissiveness(spec: PathBuf, depth: usize, cap: usize) -> ExitCode {
+fn run_permissiveness(spec: PathBuf, depth: usize, cap: usize, budget: usize) -> ExitCode {
     let loaded = match wsl::load_checked(&spec) {
         Ok(l) => l,
         Err(e) => return fail(&e.to_string()),
     };
     let net = Net::compile(&loaded.spec);
-    let measured = permissiveness(&net, depth, cap);
     println!("SPEC      {}", loaded.short_hash());
     println!(
-        "ACCEPTS   {}{} structurally distinct executions at depth {}",
-        measured.shapes,
-        if measured.truncated { "+" } else { "" },
-        measured.depth
+        "SOURCE    {} places, {} transitions",
+        loaded.spec.places.len(),
+        loaded.spec.transitions.len()
     );
-    println!("SOURCE    {} lines of declared workflow", loaded.spec.transitions.len());
+    println!("DEPTH     DISTINCT EFFECT-GRAPH SHAPES");
+    let mut last = None;
+    for level in 1..=depth {
+        let measured = permissiveness(&net, level, cap, budget);
+        println!(
+            "  {:<7} {}{}",
+            level,
+            measured.shapes,
+            if measured.truncated { "+" } else { "" }
+        );
+        last = Some(measured);
+        if last.as_ref().map(|m| m.truncated).unwrap_or(false) {
+            break;
+        }
+    }
+    if let Some(measured) = last {
+        println!(
+            "ACCEPTS   {}{} structurally distinct executions at depth {}",
+            measured.shapes,
+            if measured.truncated { "+" } else { "" },
+            measured.depth
+        );
+        println!(
+            "LANGUAGE  infinite: the net contains a cycle, so no depth bounds the accepted set"
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_mutate(spec: PathBuf, observation: PathBuf, slack: usize) -> ExitCode {
+    let loaded = match wsl::load_checked(&spec) {
+        Ok(l) => l,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let obs = match Observation::load(&observation) {
+        Ok(o) => o,
+        Err(e) => return fail(&e.to_string()),
+    };
+
+    let baseline = verify(
+        &Net::compile(&loaded.spec),
+        &obs,
+        VerifyOptions::for_observation(&obs, slack),
+    );
+    println!("SPEC      {}", loaded.short_hash());
+    println!("RUN       {}", obs.run_id);
+    println!(
+        "BASELINE  {}",
+        if baseline.accepted() { "ACCEPT" } else { "REJECT" }
+    );
+    if baseline.accepted() {
+        println!("Mutation testing measures which clause causes a rejection; this run is accepted.");
+        return ExitCode::SUCCESS;
+    }
+
+    let mutants = wsl::mutants(&loaded.spec);
+    let mut load_bearing: Vec<&wsl::Mutant> = Vec::new();
+    println!("MUTANT                                                           VERDICT");
+    for mutant in &mutants {
+        let mutated = wsl::apply(&loaded.spec, &[&mutant.mutation]);
+        if !wsl::lint(&mutated).is_sound() {
+            println!("  {:<62} unsound", mutant.id);
+            continue;
+        }
+        let outcome = verify(
+            &Net::compile(&mutated),
+            &obs,
+            VerifyOptions::for_observation(&obs, slack),
+        );
+        println!(
+            "  {:<62} {}",
+            mutant.id,
+            if outcome.accepted() { "ACCEPT" } else { "REJECT" }
+        );
+        if outcome.accepted() {
+            load_bearing.push(mutant);
+        }
+    }
+
+    if !load_bearing.is_empty() {
+        println!(
+            "RESULT    {} of {} single mutations remove the rejection",
+            load_bearing.len(),
+            mutants.len()
+        );
+        for mutant in &load_bearing {
+            println!("  {}", mutant.description);
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    println!(
+        "RESULT    0 of {} single mutations remove the rejection",
+        mutants.len()
+    );
+    let mut pairs = Vec::new();
+    for (i, first) in mutants.iter().enumerate() {
+        for second in mutants.iter().skip(i + 1) {
+            let mutated = wsl::apply(&loaded.spec, &[&first.mutation, &second.mutation]);
+            if !wsl::lint(&mutated).is_sound() {
+                continue;
+            }
+            let outcome = verify(
+                &Net::compile(&mutated),
+                &obs,
+                VerifyOptions::for_observation(&obs, slack),
+            );
+            if outcome.accepted() {
+                pairs.push((first, second));
+            }
+        }
+    }
+
+    if pairs.is_empty() {
+        println!("          no pair of mutations removes it either: the rejection does not rest on any one or two clauses");
+        return ExitCode::SUCCESS;
+    }
+
+    println!(
+        "          the rejection is over-determined: {} pair(s) of clauses must both be relaxed",
+        pairs.len()
+    );
+    println!("MINIMAL RELAXATION");
+    for (first, second) in pairs.iter().take(5) {
+        println!("  {}", first.id);
+        println!("  {}", second.id);
+        println!("    -> {}", first.description);
+        println!("    -> {}", second.description);
+    }
     ExitCode::SUCCESS
 }
 
