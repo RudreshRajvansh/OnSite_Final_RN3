@@ -1,5 +1,6 @@
 use crate::net::{
-    check_edges, check_obligations, eval_guard, match_template, resolve, Env, Failure, Marking, Net,
+    check_edges, check_obligations, eval_guard, match_template, resolve, structural_gaps, Env,
+    Failure, Marking, Net,
 };
 use crate::observation::Observation;
 use serde::Serialize;
@@ -298,6 +299,12 @@ fn expand_observed(
                 },
             );
             continue;
+        }
+
+        for (template, effect) in transition.emits.iter().zip(record.effects.iter()) {
+            for failure in structural_gaps(template, &transition.id, &effect.id, obs) {
+                log.push(score, failure);
+            }
         }
 
         for choice in net.choices(&state.marking, transition) {

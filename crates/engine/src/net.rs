@@ -25,6 +25,7 @@ pub struct Net {
     pub spec: Spec,
     pub place_names: Vec<String>,
     pub place_index: IndexMap<String, usize>,
+    pub place_carries: Vec<Vec<String>>,
     pub finals: Vec<usize>,
     pub initial: Marking,
     pub transitions: Vec<CompiledTransition>,
@@ -185,6 +186,7 @@ impl Net {
                 initial[i].push(token);
             }
         }
+        let place_carries = spec.places.iter().map(|p| p.carries.clone()).collect();
         let finals = spec
             .final_places
             .iter()
@@ -217,6 +219,7 @@ impl Net {
             spec: spec.clone(),
             place_names,
             place_index,
+            place_carries,
             finals,
             initial,
             transitions,
@@ -321,7 +324,13 @@ impl Net {
             }
         }
         for place in &t.produces {
-            next[*place].push(env.clone());
+            let mut token = Token::new();
+            for key in &self.place_carries[*place] {
+                if let Some(value) = env.get(key) {
+                    token.insert(key.clone(), value.clone());
+                }
+            }
+            next[*place].push(token);
         }
         next
     }
@@ -513,6 +522,38 @@ pub fn check_obligations(
         }
     }
     Ok(())
+}
+
+pub fn structural_gaps(
+    template: &EffectTemplate,
+    transition: &str,
+    effect_id: &str,
+    obs: &Observation,
+) -> Vec<Failure> {
+    let mut out = Vec::new();
+    for obligation in &template.requires_relation {
+        let present = obs.edges.iter().any(|e| {
+            e.ty == obligation.ty
+                && e.from == effect_id
+                && obs
+                    .effect(&e.to)
+                    .map(|t| t.kind == obligation.target)
+                    .unwrap_or(false)
+        });
+        if !present {
+            out.push(Failure::ObligationUnmet {
+                transition: transition.to_string(),
+                relation: obligation.ty.clone(),
+                effect: effect_id.to_string(),
+                target: obligation.target.clone(),
+                detail: format!(
+                    "the observation contains no `{}` edge from this effect to any `{}`",
+                    obligation.ty, obligation.target
+                ),
+            });
+        }
+    }
+    out
 }
 
 pub fn check_edges(spec: &Spec, obs: &Observation) -> Vec<Failure> {

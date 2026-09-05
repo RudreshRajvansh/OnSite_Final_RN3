@@ -217,7 +217,7 @@ pub fn lint(spec: &Spec) -> LintReport {
         }
     }
 
-    let place_vars = place_variables(spec, &initial);
+    let place_vars = place_variables(spec);
     for t in &spec.transitions {
         let mut avail: IndexSet<String> = IndexSet::new();
         for c in &t.consumes {
@@ -235,6 +235,22 @@ pub fn lint(spec: &Spec) -> LintReport {
                         t.id, var
                     ),
                 );
+            }
+        }
+        for p in &t.produces {
+            let Some(required) = place_vars.get(p) else {
+                continue;
+            };
+            for var in required {
+                if !avail.contains(var) {
+                    report.error(
+                        "W022",
+                        format!(
+                            "transition `{}` produces into place `{}` which carries `{}` but nothing binds it",
+                            t.id, p, var
+                        ),
+                    );
+                }
             }
         }
     }
@@ -305,62 +321,9 @@ fn structural_coverability(
     }
 }
 
-fn place_variables(spec: &Spec, initial: &IndexSet<String>) -> IndexMap<String, IndexSet<String>> {
-    let universe: IndexSet<String> = spec
-        .transitions
+fn place_variables(spec: &Spec) -> IndexMap<String, IndexSet<String>> {
+    spec.places
         .iter()
-        .flat_map(|t| t.binds.keys().cloned())
-        .collect();
-    let produced: IndexSet<String> = spec
-        .transitions
-        .iter()
-        .flat_map(|t| t.produces.iter().cloned())
-        .collect();
-
-    let mut vars: IndexMap<String, IndexSet<String>> = IndexMap::new();
-    for p in &spec.places {
-        let seed = if initial.contains(&p.id) || !produced.contains(&p.id) {
-            IndexSet::new()
-        } else {
-            universe.clone()
-        };
-        vars.insert(p.id.clone(), seed);
-    }
-
-    loop {
-        let mut next: IndexMap<String, Option<IndexSet<String>>> = IndexMap::new();
-        for t in &spec.transitions {
-            let mut avail: IndexSet<String> = IndexSet::new();
-            for c in &t.consumes {
-                if let Some(v) = vars.get(c) {
-                    avail.extend(v.iter().cloned());
-                }
-            }
-            avail.extend(t.binds.keys().cloned());
-            for p in &t.produces {
-                let slot = next.entry(p.clone()).or_insert(None);
-                let merged = match slot.take() {
-                    None => avail.clone(),
-                    Some(prev) => prev.intersection(&avail).cloned().collect(),
-                };
-                *slot = Some(merged);
-            }
-        }
-        let mut changed = false;
-        for (p, v) in next {
-            let Some(v) = v else { continue };
-            if initial.contains(&p) {
-                continue;
-            }
-            if let Some(cur) = vars.get_mut(&p) {
-                if *cur != v {
-                    *cur = v;
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            return vars;
-        }
-    }
+        .map(|p| (p.id.clone(), p.carries.iter().cloned().collect()))
+        .collect()
 }

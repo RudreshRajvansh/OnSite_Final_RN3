@@ -15,7 +15,9 @@ places:
       - { type: repo, value: "app" }
   - id: source
   - id: artifact
+    carries: [digest]
   - id: tested
+    carries: [digest]
   - id: approval
   - id: released
 
@@ -33,7 +35,7 @@ transitions:
   - id: build
     principal: ci_runner
     consumes: [source]
-    produces: [artifact]
+    produces: [artifact, source]
     binds:
       digest: fresh
     emits:
@@ -54,7 +56,7 @@ transitions:
     produces: [approval]
     emits:
       - effect: approval_issued
-        kind: break_glass
+        grant: break_glass
 
   - id: publish_standard
     principal: ci_runner

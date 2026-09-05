@@ -36,6 +36,8 @@ pub struct Place {
     pub id: String,
     #[serde(default)]
     pub tokens: Vec<TokenSpec>,
+    #[serde(default)]
+    pub carries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
