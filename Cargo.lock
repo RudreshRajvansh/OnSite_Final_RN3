@@ -99,6 +99,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "maskedrunner-engine"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "indexmap",
+ "maskedrunner-wsl",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "maskedrunner-wsl"
 version = "0.1.0"
 dependencies = [

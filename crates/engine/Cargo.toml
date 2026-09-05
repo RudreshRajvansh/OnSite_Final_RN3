@@ -1,0 +1,18 @@
+[package]
+name = "maskedrunner-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "engine"
+path = "src/lib.rs"
+
+[dependencies]
+maskedrunner-wsl = { path = "../wsl" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
