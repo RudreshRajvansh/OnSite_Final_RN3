@@ -1,17 +1,19 @@
 [package]
-name = "maskedrunner-cli"
+name = "maskedrunner-explain"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "maskedrunner"
-path = "src/main.rs"
+[lib]
+name = "explain"
+path = "src/lib.rs"
 
 [dependencies]
 maskedrunner-wsl = { path = "../wsl" }
 maskedrunner-engine = { path = "../engine" }
-maskedrunner-explain = { path = "../explain" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-clap = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }

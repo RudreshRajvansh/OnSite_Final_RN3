@@ -286,23 +286,54 @@ fn expand_observed(
             log.push(score, Failure::NotEnabled { step, place });
             continue;
         }
-        if transition.emits.len() != record.effects.len() {
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        let mut cursor = 0usize;
+        let mut shape_ok = true;
+        for (position, effect) in record.effects.iter().enumerate() {
+            while cursor < transition.emits.len()
+                && transition.emits[cursor].effect != effect.kind
+            {
+                cursor += 1;
+            }
+            if cursor == transition.emits.len() {
+                shape_ok = false;
+                break;
+            }
+            pairs.push((cursor, position));
+            cursor += 1;
+        }
+        if !shape_ok {
             log.push(
                 score,
                 Failure::EffectShapeMismatch {
                     step,
                     detail: format!(
-                        "transition emits {} effect(s), record carries {}",
-                        transition.emits.len(),
-                        record.effects.len()
+                        "the record carries effects [{}] which transition emissions [{}] cannot account for",
+                        record
+                            .effects
+                            .iter()
+                            .map(|e| e.kind.clone())
+                            .collect::<Vec<String>>()
+                            .join(", "),
+                        transition
+                            .emits
+                            .iter()
+                            .map(|e| e.effect.clone())
+                            .collect::<Vec<String>>()
+                            .join(", ")
                     ),
                 },
             );
             continue;
         }
 
-        for (template, effect) in transition.emits.iter().zip(record.effects.iter()) {
-            for failure in structural_gaps(template, &transition.id, &effect.id, obs) {
+        for (template, effect) in &pairs {
+            for failure in structural_gaps(
+                &transition.emits[*template],
+                &transition.id,
+                &record.effects[*effect].id,
+                obs,
+            ) {
                 log.push(score, failure);
             }
         }
@@ -313,8 +344,13 @@ fn expand_observed(
             };
             let mut env = base;
             let mut failed = false;
-            for (template, effect) in transition.emits.iter().zip(record.effects.iter()) {
-                match match_template(template, effect, &env, &step) {
+            for (template, effect) in &pairs {
+                match match_template(
+                    &transition.emits[*template],
+                    &record.effects[*effect],
+                    &env,
+                    &step,
+                ) {
                     Ok(next) => env = next,
                     Err(failure) => {
                         log.push(score, failure);
@@ -346,11 +382,11 @@ fn expand_observed(
                 }
             }
             let mut obligation_failed = false;
-            for (template, effect) in transition.emits.iter().zip(record.effects.iter()) {
+            for (template, effect) in &pairs {
                 if let Err(failure) = check_obligations(
-                    template,
+                    &transition.emits[*template],
                     &transition.id,
-                    &effect.id,
+                    &record.effects[*effect].id,
                     &env,
                     obs,
                     &state.matched,

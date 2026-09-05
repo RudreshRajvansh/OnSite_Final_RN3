@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/wsl",
     "crates/engine",
+    "crates/explain",
     "crates/cli",
 ]
 
@@ -19,7 +20,7 @@ sha2 = "0.10"
 hex = "0.4"
 thiserror = "1"
 indexmap = { version = "2", features = ["serde"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "2" }
 rand = "0.8"
 clap = { version = "4", features = ["derive"] }
 axum = "0.7"

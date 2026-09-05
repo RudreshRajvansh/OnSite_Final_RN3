@@ -1,0 +1,84 @@
+pub mod certificate;
+pub mod mus;
+
+pub use certificate::{
+    sign, verify_signature, Certificate, CertificateError, SignedCertificate, CERTIFICATE_KIND,
+    SIGNING_KEY_ENV,
+};
+pub use mus::{extract, MusOptions, MusResult};
+
+use engine::{Net, Observation, VerifyOutcome};
+
+pub fn explain(
+    net: &Net,
+    workflow: &str,
+    spec_hash: &str,
+    obs: &Observation,
+    outcome: &VerifyOutcome,
+    robust: Option<bool>,
+) -> Certificate {
+    let mut notes = Vec::new();
+    let mut core = MusResult {
+        facts: Vec::new(),
+        oracle_calls: 0,
+        minimal: true,
+        relaxation_accepts: false,
+    };
+
+    if !outcome.accepted() {
+        core = extract(net, obs, MusOptions::for_observation(obs));
+        if core.relaxation_accepts {
+            let complete: Vec<String> = obs
+                .planes
+                .iter()
+                .filter(|(_, p)| p.complete)
+                .map(|(name, _)| name.clone())
+                .collect();
+            notes.push(format!(
+                "rejection depends on the completeness assumption for plane(s) [{}]: under an open world where any step may go unlogged, the observation becomes reachable",
+                complete.join(", ")
+            ));
+        }
+        if !core.minimal {
+            notes.push(
+                "core could not be reduced to a locally minimal set within the oracle budget"
+                    .to_string(),
+            );
+        }
+    }
+
+    if outcome.exhausted {
+        notes.push(format!(
+            "search stopped at the state cap; the result is relative to bound k={}",
+            outcome.bound
+        ));
+    }
+
+    Certificate {
+        kind: CERTIFICATE_KIND.to_string(),
+        engine: format!("maskedrunner {}", env!("CARGO_PKG_VERSION")),
+        workflow: workflow.to_string(),
+        spec_hash: format!("sha256:{}", spec_hash),
+        run_id: obs.run_id.clone(),
+        observation_hash: format!("sha256:{}", obs.hash()),
+        verdict: if outcome.accepted() {
+            "accept".to_string()
+        } else {
+            "reject".to_string()
+        },
+        bound: outcome.bound,
+        slack: outcome.slack,
+        robust,
+        states_explored: outcome.states_explored,
+        witness: outcome
+            .witness
+            .as_ref()
+            .map(|w| w.iter().map(|s| s.transition.clone()).collect()),
+        minimal_unsatisfiable_set: core.facts,
+        mus_minimal: core.minimal,
+        mus_oracle_calls: core.oracle_calls,
+        failed_obligations: outcome.failures.iter().map(|f| f.render()).collect(),
+        notes,
+        issued_at_unix: certificate::now_unix(),
+    }
+}

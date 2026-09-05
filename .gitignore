@@ -2,3 +2,4 @@ target/
 *.pdb
 .DS_Store
 node_modules/
+out/

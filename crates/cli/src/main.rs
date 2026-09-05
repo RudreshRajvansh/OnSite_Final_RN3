@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use engine::{permissiveness, verify, Net, Observation, VerifyOptions, VerifyOutcome};
+use explain::{explain, sign, verify_signature, Certificate, SignedCertificate};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -27,6 +28,8 @@ enum Command {
         slack: usize,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        certificate: Option<PathBuf>,
     },
     Permissiveness {
         #[arg(long, default_value = DEFAULT_SPEC)]
@@ -35,6 +38,10 @@ enum Command {
         depth: usize,
         #[arg(long, default_value_t = 100_000)]
         cap: usize,
+    },
+    Check {
+        #[arg(long)]
+        certificate: PathBuf,
     },
 }
 
@@ -46,8 +53,10 @@ fn main() -> ExitCode {
             observation,
             slack,
             json,
-        } => run_verify(spec, observation, slack, json),
+            certificate,
+        } => run_verify(spec, observation, slack, json, certificate),
         Command::Permissiveness { spec, depth, cap } => run_permissiveness(spec, depth, cap),
+        Command::Check { certificate } => run_check(certificate),
     }
 }
 
@@ -78,7 +87,13 @@ fn run_lint(path: PathBuf) -> ExitCode {
     }
 }
 
-fn run_verify(spec: PathBuf, observation: PathBuf, slack: usize, json: bool) -> ExitCode {
+fn run_verify(
+    spec: PathBuf,
+    observation: PathBuf,
+    slack: usize,
+    json: bool,
+    certificate: Option<PathBuf>,
+) -> ExitCode {
     let loaded = match wsl::load_checked(&spec) {
         Ok(l) => l,
         Err(e) => return fail(&e.to_string()),
@@ -100,18 +115,34 @@ fn run_verify(spec: PathBuf, observation: PathBuf, slack: usize, json: bool) -> 
         Some(!verify(&net, &obs, wide).accepted())
     };
 
+    let issued = explain(
+        &net,
+        &loaded.spec.workflow,
+        &loaded.hash,
+        &obs,
+        &outcome,
+        robust,
+    );
+
     if json {
-        let payload = serde_json::json!({
-            "run_id": obs.run_id,
-            "spec": loaded.short_hash(),
-            "spec_hash": loaded.hash,
-            "observation_hash": obs.hash(),
-            "robust": robust,
-            "outcome": outcome,
-        });
-        println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+        println!("{}", serde_json::to_string_pretty(&issued).unwrap());
     } else {
-        report(&loaded, &obs, &outcome, robust);
+        report(&loaded, &obs, &outcome, robust, &issued);
+    }
+
+    if let Some(path) = certificate {
+        match sign(issued).and_then(|signed| {
+            serde_json::to_string_pretty(&signed)
+                .map_err(|e| explain::CertificateError::Encoding(e.to_string()))
+        }) {
+            Ok(body) => {
+                if let Err(e) = std::fs::write(&path, body) {
+                    return fail(&e.to_string());
+                }
+                println!("CERTIFICATE {}", path.display());
+            }
+            Err(e) => return fail(&e.to_string()),
+        }
     }
 
     if outcome.accepted() {
@@ -126,6 +157,7 @@ fn report(
     obs: &Observation,
     outcome: &VerifyOutcome,
     robust: Option<bool>,
+    issued: &Certificate,
 ) {
     let verdict = if outcome.accepted() { "ACCEPT" } else { "REJECT" };
     match robust {
@@ -154,6 +186,23 @@ fn report(
                 bindings.join(" ")
             );
         }
+    }
+    if !issued.minimal_unsatisfiable_set.is_empty() {
+        println!(
+            "MINIMAL UNSATISFIABLE SET   ({} oracle calls{})",
+            issued.mus_oracle_calls,
+            if issued.mus_minimal {
+                ""
+            } else {
+                ", not reduced to a local minimum"
+            }
+        );
+        for (i, fact) in issued.minimal_unsatisfiable_set.iter().enumerate() {
+            println!("  [{}] {}", i + 1, fact.render());
+        }
+    }
+    for note in &issued.notes {
+        println!("NOTE      {}", note);
     }
     if !outcome.failures.is_empty() {
         println!("FAILED OBLIGATION");
@@ -192,6 +241,30 @@ fn run_permissiveness(spec: PathBuf, depth: usize, cap: usize) -> ExitCode {
     );
     println!("SOURCE    {} lines of declared workflow", loaded.spec.transitions.len());
     ExitCode::SUCCESS
+}
+
+fn run_check(path: PathBuf) -> ExitCode {
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let signed: SignedCertificate = match serde_json::from_str(&raw) {
+        Ok(s) => s,
+        Err(e) => return fail(&e.to_string()),
+    };
+    match verify_signature(&signed) {
+        Ok(()) => {
+            println!("SIGNATURE VALID");
+            println!("KEY       {}", signed.public_key);
+            println!("PAYLOAD   sha256:{}", signed.payload_sha256);
+            println!("VERDICT   {}", signed.certificate.verdict.to_uppercase());
+            println!("WORKFLOW  {}", signed.certificate.workflow);
+            println!("SPEC      {}", signed.certificate.spec_hash);
+            println!("RUN       {}", signed.certificate.run_id);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&e.to_string()),
+    }
 }
 
 fn fail(message: &str) -> ExitCode {
