@@ -1,0 +1,100 @@
+spec_version: 1
+workflow: release-pipeline
+
+principals:
+  ci_runner:
+    class: service_account
+    id_pattern: "ci-bot@*"
+  approver:
+    class: human
+    id_pattern: "*@corp.example"
+
+places:
+  - id: start
+    tokens:
+      - { type: repo, value: "app" }
+  - id: source
+  - id: artifact
+  - id: tested
+  - id: approval
+  - id: released
+
+final: [released]
+
+transitions:
+  - id: checkout
+    principal: ci_runner
+    consumes: [start]
+    produces: [source]
+    emits:
+      - effect: vcs_read
+        scope: "repo/*"
+
+  - id: build
+    principal: ci_runner
+    consumes: [source]
+    produces: [artifact]
+    binds:
+      digest: fresh
+    emits:
+      - effect: artifact_create
+        digest: $digest
+
+  - id: test
+    principal: ci_runner
+    consumes: [artifact]
+    produces: [tested, artifact]
+    emits:
+      - effect: ci_report
+        digest: $digest
+
+  - id: grant_emergency_approval
+    principal: approver
+    consumes: []
+    produces: [approval]
+    emits:
+      - effect: approval_issued
+        kind: break_glass
+
+  - id: publish_standard
+    principal: ci_runner
+    consumes: [tested, artifact]
+    produces: [released]
+    emits:
+      - effect: registry_write
+        scope: "registry://prod/*"
+        digest: $digest
+        requires_relation:
+          - type: derives_from
+            target: artifact_create
+            bind:
+              digest: $digest
+
+  - id: publish_breakglass
+    principal: ci_runner
+    consumes: [artifact, approval]
+    produces: [released]
+    emits:
+      - effect: registry_write
+        scope: "registry://prod/*"
+        digest: $digest
+        requires_relation:
+          - type: derives_from
+            target: artifact_create
+            bind:
+              digest: $digest
+
+relations:
+  derives_from:
+    from: registry_write
+    to: artifact_create
+    constraint: "from.digest == to.digest"
+
+invariants:
+  - id: no-unproduced-prod-write
+    kind: effect_has_producing_transition
+    effect: registry_write
+    scope: "registry://prod/*"
+  - id: approval-single-use
+    kind: token_consumed_not_copied
+    place: approval
