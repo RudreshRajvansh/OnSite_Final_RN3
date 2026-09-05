@@ -1,0 +1,69 @@
+{
+  "planes": {
+    "runner": {
+      "complete": true,
+      "carries": ["vcs_read", "artifact_create", "ci_report"]
+    },
+    "registry": {
+      "complete": true,
+      "carries": ["registry_write"]
+    },
+    "audit": {
+      "complete": true,
+      "carries": ["approval_issued"]
+    }
+  },
+  "runner_principal": "${actor}@ci.internal",
+  "jobs": {
+    "checkout": {
+      "step": "checkout",
+      "effects": [
+        { "kind": "vcs_read", "args": { "scope": "repo/${repository_name}" } }
+      ]
+    },
+    "build": {
+      "step": "build",
+      "effects": [
+        { "kind": "artifact_create", "args": { "digest": "${outputs.digest}" } }
+      ]
+    },
+    "test": {
+      "step": "test",
+      "effects": [
+        { "kind": "ci_report", "args": { "digest": "${outputs.digest}" } }
+      ]
+    },
+    "publish": {
+      "step": "publish_standard",
+      "effects": [
+        {
+          "kind": "registry_write",
+          "args": { "scope": "${outputs.scope}", "digest": "${outputs.digest}" }
+        }
+      ]
+    },
+    "publish-hotfix": {
+      "step": "publish_breakglass",
+      "effects": [
+        {
+          "kind": "registry_write",
+          "args": { "scope": "${outputs.scope}", "digest": "${outputs.digest}" }
+        }
+      ]
+    }
+  },
+  "registry_actions": {
+    "publish": {
+      "kind": "registry_write",
+      "args": { "scope": "${scope}", "digest": "${digest}" }
+    }
+  },
+  "audit_actions": {
+    "grant_emergency_approval": {
+      "step": "grant_emergency_approval",
+      "effects": [
+        { "kind": "approval_issued", "args": { "kind": "${attributes.kind}" } }
+      ]
+    }
+  }
+}

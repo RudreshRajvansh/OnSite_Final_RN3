@@ -429,21 +429,18 @@ fn expand_slack(
 ) {
     let score = state.score();
     for transition in &net.transitions {
-        if transition
-            .emits
-            .iter()
-            .any(|e| obs.plane_carries(&e.effect))
-        {
-            continue;
-        }
         if net.missing_place(&state.marking, transition).is_some() {
             continue;
         }
+        let logged = transition
+            .emits
+            .iter()
+            .any(|e| obs.plane_carries(&e.effect));
         for choice in net.choices(&state.marking, transition) {
             let Some(base) = net.merge_env(&state.marking, transition, &choice) else {
                 continue;
             };
-            let mut targets: Vec<Option<String>> = vec![None];
+            let mut targets: Vec<Option<String>> = if logged { Vec::new() } else { vec![None] };
             if transition.emits.len() == 1 {
                 let kind = &transition.emits[0].effect;
                 for effect in obs.dangling_effects() {

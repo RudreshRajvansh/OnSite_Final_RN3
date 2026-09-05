@@ -1,0 +1,43 @@
+{
+  "run_id": "capjs-2026-05-18",
+  "repository": "cap-js/app",
+  "runner": {
+    "jobs": [
+      {
+        "id": "gha-9911-checkout",
+        "name": "checkout",
+        "actor": "ci-bot",
+        "ts": "2026-05-18T08:14:03Z",
+        "outputs": {}
+      },
+      {
+        "id": "gha-9911-build",
+        "name": "build",
+        "actor": "ci-bot",
+        "ts": "2026-05-18T08:16:22Z",
+        "outputs": { "digest": "sha256:1A2B" }
+      },
+      {
+        "id": "gha-9911-test",
+        "name": "test",
+        "actor": "ci-bot",
+        "ts": "2026-05-18T08:19:47Z",
+        "outputs": { "digest": "sha256:1A2B" }
+      }
+    ]
+  },
+  "registry": {
+    "events": [
+      {
+        "id": "npm-77120",
+        "ts": "2026-05-18T11:02:58Z",
+        "actor": "npm-token:ci-bot",
+        "action": "publish",
+        "scope": "registry://prod/app",
+        "digest": "sha256:D00D",
+        "provenance": null
+      }
+    ]
+  },
+  "cloud_audit": { "entries": [] }
+}

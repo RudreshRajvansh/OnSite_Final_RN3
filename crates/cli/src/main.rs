@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const DEFAULT_SPEC: &str = "spec/release.wsl.yaml";
+const DEFAULT_MAP: &str = "spec/adapter.map.json";
 
 #[derive(Parser)]
 #[command(name = "maskedrunner", version, about = "workflow integrity verification")]
@@ -43,6 +44,14 @@ enum Command {
         #[arg(long)]
         certificate: PathBuf,
     },
+    Ingest {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long, default_value = DEFAULT_MAP)]
+        map: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -57,6 +66,7 @@ fn main() -> ExitCode {
         } => run_verify(spec, observation, slack, json, certificate),
         Command::Permissiveness { spec, depth, cap } => run_permissiveness(spec, depth, cap),
         Command::Check { certificate } => run_check(certificate),
+        Command::Ingest { bundle, map, out } => run_ingest(bundle, map, out),
     }
 }
 
@@ -240,6 +250,48 @@ fn run_permissiveness(spec: PathBuf, depth: usize, cap: usize) -> ExitCode {
         measured.depth
     );
     println!("SOURCE    {} lines of declared workflow", loaded.spec.transitions.len());
+    ExitCode::SUCCESS
+}
+
+fn run_ingest(bundle: PathBuf, map: PathBuf, out: Option<PathBuf>) -> ExitCode {
+    let map = match adapters::load_map(&map) {
+        Ok(m) => m,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let bundle = match adapters::load_bundle(&bundle) {
+        Ok(b) => b,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let obs = adapters::normalize(&bundle, &map);
+    if let Err(e) = obs.validate() {
+        return fail(&e.to_string());
+    }
+    let body = match serde_json::to_string_pretty(&obs) {
+        Ok(b) => b,
+        Err(e) => return fail(&e.to_string()),
+    };
+    match out {
+        Some(path) => {
+            if let Err(e) = std::fs::write(&path, body) {
+                return fail(&e.to_string());
+            }
+            let steps = obs.step_records().len();
+            println!("RUN       {}", obs.run_id);
+            println!(
+                "PLANES    {}",
+                obs.planes.keys().cloned().collect::<Vec<String>>().join(", ")
+            );
+            println!(
+                "RECORDS   {} ({} with a declared step, {} effect-only)",
+                obs.records.len(),
+                steps,
+                obs.records.len() - steps
+            );
+            println!("EDGES     {}", obs.edges.len());
+            println!("WROTE     {}", path.display());
+        }
+        None => println!("{}", body),
+    }
     ExitCode::SUCCESS
 }
 

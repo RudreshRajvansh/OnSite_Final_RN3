@@ -1,0 +1,14 @@
+[package]
+name = "maskedrunner-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "adapters"
+path = "src/lib.rs"
+
+[dependencies]
+maskedrunner-engine = { path = "../engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }

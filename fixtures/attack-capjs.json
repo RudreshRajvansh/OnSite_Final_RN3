@@ -1,0 +1,85 @@
+{
+  "run_id": "capjs-2026-05-18",
+  "planes": {
+    "audit": {
+      "complete": true,
+      "carries": [
+        "approval_issued"
+      ]
+    },
+    "registry": {
+      "complete": true,
+      "carries": [
+        "registry_write"
+      ]
+    },
+    "runner": {
+      "complete": true,
+      "carries": [
+        "vcs_read",
+        "artifact_create",
+        "ci_report"
+      ]
+    }
+  },
+  "records": [
+    {
+      "id": "gha-9911-checkout",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "checkout",
+      "ts": "2026-05-18T08:14:03Z",
+      "effects": [
+        {
+          "id": "gha-9911-checkout.0",
+          "kind": "vcs_read",
+          "scope": "repo/app"
+        }
+      ]
+    },
+    {
+      "id": "gha-9911-build",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "build",
+      "ts": "2026-05-18T08:16:22Z",
+      "effects": [
+        {
+          "id": "gha-9911-build.0",
+          "kind": "artifact_create",
+          "digest": "sha256:1A2B"
+        }
+      ]
+    },
+    {
+      "id": "gha-9911-test",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "test",
+      "ts": "2026-05-18T08:19:47Z",
+      "effects": [
+        {
+          "id": "gha-9911-test.0",
+          "kind": "ci_report",
+          "digest": "sha256:1A2B"
+        }
+      ]
+    },
+    {
+      "id": "npm-77120",
+      "plane": "registry",
+      "principal": "npm-token:ci-bot",
+      "step": null,
+      "ts": "2026-05-18T11:02:58Z",
+      "effects": [
+        {
+          "id": "npm-77120.0",
+          "kind": "registry_write",
+          "digest": "sha256:D00D",
+          "scope": "registry://prod/app"
+        }
+      ]
+    }
+  ],
+  "edges": []
+}

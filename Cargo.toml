@@ -4,6 +4,7 @@ members = [
     "crates/wsl",
     "crates/engine",
     "crates/explain",
+    "crates/adapters",
     "crates/cli",
 ]
 
