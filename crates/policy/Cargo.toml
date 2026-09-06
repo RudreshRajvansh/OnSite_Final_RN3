@@ -1,0 +1,15 @@
+[package]
+name = "maskedrunner-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "policy"
+path = "src/lib.rs"
+
+[dependencies]
+maskedrunner-engine = { path = "../engine" }
+maskedrunner-wsl = { path = "../wsl" }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,5 +1,3 @@
-mod policy;
-
 use clap::{Parser, Subcommand};
 use engine::{permissiveness, verify, Net, Observation, VerifyOptions, VerifyOutcome};
 use explain::{explain, sign, verify_signature, Certificate, SignedCertificate};

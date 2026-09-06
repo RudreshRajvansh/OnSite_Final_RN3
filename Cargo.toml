@@ -5,6 +5,7 @@ members = [
     "crates/engine",
     "crates/explain",
     "crates/adapters",
+    "crates/policy",
     "crates/api",
     "crates/cli",
 ]

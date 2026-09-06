@@ -1,5 +1,3 @@
-mod policy;
-
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -132,8 +130,8 @@ fn evaluate(state: &AppState, obs: &Observation, slack: usize, evidence: Option<
         };
     }
     let mut v = evaluate_with(&state.loaded, &net, obs, slack);
-    let (allowed, findings) = policy::evaluate(&state.policy, obs);
-    v["permission"] = json!({ "allowed": allowed, "findings": findings });
+    let permission = policy::evaluate(&state.policy, obs);
+    v["permission"] = json!({ "allowed": permission.allowed(), "findings": permission.messages() });
     v["evidence"] = presented;
     // Only price the catalogue when this run has something to say about it:
     // building it verifies every fixture, which is wasted on a run that neither
@@ -592,8 +590,9 @@ async fn post_live(
     let net = &chosen.net;
     let slack = payload.slack.unwrap_or(1);
     let mut body = evaluate_with(loaded, net, &obs, slack);
-    let (allowed, findings) = policy::evaluate(&state.policy, &obs);
-    body["permission"] = json!({ "allowed": allowed, "findings": findings });
+    let permission = policy::evaluate(&state.policy, &obs);
+    body["permission"] =
+        json!({ "allowed": permission.allowed(), "findings": permission.messages() });
     body["id"] = json!(obs.run_id);
     body["spec_used"] = json!(loaded.spec.workflow);
     body["spec_def"] = json!(loaded.spec);
@@ -687,9 +686,14 @@ async fn main() {
         .or_else(|_| adapters::load_map("spec/adapter.map.json"))
         .unwrap_or_default();
 
-    let policy = policy::load(env_or("MASKEDRUNNER_POLICY", "demo/bot-policy.json")).unwrap_or(
+    // Falling back to a permissive policy is deliberate. The legacy lane exists
+    // to show what an identity checker concludes, and a missing policy file must
+    // not quietly turn it into a second reachability check.
+    let policy_path = env_or("MASKEDRUNNER_POLICY", "demo/bot-policy.json");
+    let policy = policy::load(&policy_path).unwrap_or_else(|e| {
+        eprintln!("using a permissive default policy: {}", e);
         policy::BotPolicy {
-            identity: String::new(),
+            identity: "*".into(),
             allowed_actions: vec![
                 "vcs_read".into(),
                 "artifact_create".into(),
@@ -702,8 +706,9 @@ async fn main() {
                 "secrets://prod/*".into(),
                 "registry://prod/*".into(),
             ],
-        },
-    );
+            ..Default::default()
+        }
+    });
 
     let state: Shared = Arc::new(AppState {
         loaded,

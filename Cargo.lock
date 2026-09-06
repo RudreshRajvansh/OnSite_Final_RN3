@@ -537,6 +537,7 @@ dependencies = [
  "maskedrunner-adapters",
  "maskedrunner-engine",
  "maskedrunner-explain",
+ "maskedrunner-policy",
  "maskedrunner-wsl",
  "serde",
  "serde_json",
@@ -553,6 +554,7 @@ dependencies = [
  "maskedrunner-adapters",
  "maskedrunner-engine",
  "maskedrunner-explain",
+ "maskedrunner-policy",
  "maskedrunner-wsl",
  "serde",
  "serde_json",
@@ -584,6 +586,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "maskedrunner-policy"
+version = "0.1.0"
+dependencies = [
+ "maskedrunner-engine",
+ "maskedrunner-wsl",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

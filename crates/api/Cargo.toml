@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 maskedrunner-wsl = { path = "../wsl" }
 maskedrunner-engine = { path = "../engine" }
+maskedrunner-policy = { path = "../policy" }
 maskedrunner-explain = { path = "../explain" }
 maskedrunner-adapters = { path = "../adapters" }
 serde = { workspace = true }

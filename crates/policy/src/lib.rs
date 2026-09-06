@@ -2,9 +2,11 @@ use engine::Observation;
 use serde::Deserialize;
 use wsl::glob_match;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Credential {
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub issued: String,
@@ -12,11 +14,13 @@ pub struct Credential {
     pub last_rotated: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct BotPolicy {
+    #[serde(default)]
     pub identity: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub credential: Credential,
     #[serde(default)]
     pub allowed_actions: Vec<String>,
@@ -43,11 +47,16 @@ impl PolicyOutcome {
     pub fn allowed(&self) -> bool {
         self.findings.is_empty()
     }
+
+    pub fn messages(&self) -> Vec<String> {
+        self.findings.iter().map(|f| f.detail.clone()).collect()
+    }
 }
 
 pub fn load(path: impl AsRef<std::path::Path>) -> Result<BotPolicy, String> {
-    let raw = std::fs::read_to_string(path.as_ref()).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
+    let path = path.as_ref();
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    serde_json::from_str(&raw).map_err(|e| format!("{}: {}", path.display(), e))
 }
 
 fn identity_of(principal: &str) -> String {
@@ -58,6 +67,14 @@ fn identity_of(principal: &str) -> String {
     }
 }
 
+/// The legacy check every existing tool already runs: is each action one this
+/// identity is permitted to perform? It knows nothing about whether the run as
+/// a whole was possible, which is the entire point of the comparison.
+///
+/// The identity is a glob, so a policy written as `*` admits any principal.
+/// That is not laxness for its own sake: it is what a stolen but genuine
+/// credential looks like to an identity checker, and the demo depends on this
+/// check passing a run that reachability then rejects.
 pub fn evaluate(policy: &BotPolicy, obs: &Observation) -> PolicyOutcome {
     let mut findings = Vec::new();
     let mut checked_identities = 0usize;
@@ -65,12 +82,14 @@ pub fn evaluate(policy: &BotPolicy, obs: &Observation) -> PolicyOutcome {
 
     for record in &obs.records {
         checked_identities += 1;
-        let identity = identity_of(&record.principal);
-        if identity != policy.identity {
-            findings.push(PolicyFinding {
-                subject: record.id.clone(),
-                detail: format!("`{}` is not the authorised identity", identity),
-            });
+        if !policy.identity.is_empty() {
+            let identity = identity_of(&record.principal);
+            if identity != policy.identity && !glob_match(&policy.identity, &identity) {
+                findings.push(PolicyFinding {
+                    subject: record.id.clone(),
+                    detail: format!("`{}` is not the authorised identity", identity),
+                });
+            }
         }
         if let Some(step) = &record.step {
             if !policy.allowed_steps.is_empty() && !policy.allowed_steps.contains(step) {
