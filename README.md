@@ -197,6 +197,34 @@ the minimal unsatisfiable set and the failed obligations. Editing any field brea
 before the signature is even checked. Set `MASKEDRUNNER_SIGNING_KEY` to a 32-byte hex key, or an
 ephemeral key is generated for you.
 
+### Blocking a pipeline
+
+`.github/workflows/_verify.yml` in the demo repo runs the verifier as a gate: it reads the run it
+lives in from the Actions API, imports it, verifies it, and fails the workflow when the outcome is
+unreachable. Wire it into any workflow with three lines:
+
+```yaml
+  maskedrunner:
+    needs: [checkout, stamp, commit]
+    if: always()
+    uses: ./.github/workflows/_verify.yml
+    with:
+      run_id: ${{ github.run_id }}
+      spec: maskedrunner/heartbeat.wsl.yaml
+```
+
+Anything integrating the CLI depends on its exit codes, so they are a contract:
+
+| Code | Meaning |
+|---|---|
+| 0 | accepted: the observed run is reachable in the declared workflow |
+| 1 | rejected: it is not, and the certificate says why |
+| 2 | no verdict: the model, the map or the observation could not be read |
+
+Two and one must never be collapsed. A gate that cannot read a run has not judged it, and showing
+that as a rejection accuses a pipeline of something the verifier never concluded. The gate reports
+each case separately, in the log and in the run summary.
+
 ## What it does not claim
 
 Soundness is relative to the specification. A rejection proves that no execution of the declared
