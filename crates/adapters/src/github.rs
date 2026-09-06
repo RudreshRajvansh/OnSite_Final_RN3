@@ -3,15 +3,23 @@ use engine::{Observation, ObservedEdge, Record};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+fn lenient<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Run {
     #[serde(default)]
     pub id: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub head_sha: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub run_started_at: String,
     #[serde(default)]
     pub actor: Option<Actor>,
@@ -42,7 +50,7 @@ pub struct Job {
     pub name: String,
     #[serde(default)]
     pub conclusion: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub started_at: String,
     #[serde(default)]
     pub steps: Vec<Step>,
@@ -55,7 +63,7 @@ pub struct Step {
     pub number: u32,
     #[serde(default)]
     pub conclusion: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub started_at: String,
 }
 

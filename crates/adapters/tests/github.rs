@@ -220,3 +220,38 @@ fn records_are_ordered_by_time() {
     let steps: Vec<String> = obs.records.iter().filter_map(|r| r.step.clone()).collect();
     assert_eq!(steps, vec!["checkout", "build"]);
 }
+
+#[test]
+fn a_run_still_in_progress_parses() {
+    // A gate that verifies a run from inside that run always sees itself
+    // unfinished, and the API writes null — not an absent field — for a step
+    // that has not started. serde's `default` does not cover an explicit null,
+    // so this shape used to abort the import and read, from the outside, as a
+    // rejection of a perfectly healthy pipeline.
+    let live = serde_json::json!({
+        "jobs": [
+            { "id": 1, "name": "checkout", "conclusion": "success",
+              "started_at": "2026-01-01T00:00:00Z", "steps": [] },
+            { "id": 2, "name": "maskedrunner / verify", "conclusion": null,
+              "status": "in_progress", "started_at": "2026-01-01T00:01:00Z",
+              "steps": [ { "name": "Complete job", "status": "queued",
+                           "conclusion": null, "number": 9, "started_at": null } ] }
+        ]
+    });
+    let jobs: Jobs = serde_json::from_value(live).expect("a live payload must parse");
+
+    let partial_run: Run = serde_json::from_value(serde_json::json!({
+        "id": 42, "name": null, "head_sha": null, "run_started_at": null,
+        "actor": { "login": "ci-bot" },
+        "repository": { "full_name": "acme/widgets" }
+    }))
+    .expect("a run with null scalars must parse");
+
+    let obs = normalize(&partial_run, &jobs, &[], &map());
+    let steps: Vec<String> = obs.records.iter().filter_map(|r| r.step.clone()).collect();
+    assert_eq!(
+        steps,
+        vec!["checkout"],
+        "the gate's own unfinished job contributes no evidence, and the rest still imports"
+    );
+}
