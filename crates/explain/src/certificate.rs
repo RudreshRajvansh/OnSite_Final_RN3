@@ -166,8 +166,8 @@ pub fn check_trusted(
 }
 
 pub fn verify_signature(signed: &SignedCertificate) -> Result<(), CertificateError> {
-    let key_bytes = hex::decode(&signed.public_key)
-        .map_err(|e| CertificateError::BadKey(e.to_string()))?;
+    let key_bytes =
+        hex::decode(&signed.public_key).map_err(|e| CertificateError::BadKey(e.to_string()))?;
     let key_bytes: [u8; 32] = key_bytes
         .try_into()
         .map_err(|_| CertificateError::BadKey("public key must be 32 bytes".to_string()))?;

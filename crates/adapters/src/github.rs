@@ -97,7 +97,8 @@ impl Facts {
 
 fn read<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T, AdapterError> {
     let raw = std::fs::read_to_string(path).map_err(|e| AdapterError::Io(e.to_string()))?;
-    serde_json::from_str(&raw).map_err(|e| AdapterError::Parse(format!("{}: {}", path.display(), e)))
+    serde_json::from_str(&raw)
+        .map_err(|e| AdapterError::Parse(format!("{}: {}", path.display(), e)))
 }
 
 pub fn load_run(path: impl AsRef<std::path::Path>) -> Result<Run, AdapterError> {
@@ -112,7 +113,6 @@ pub fn load_facts(path: impl AsRef<std::path::Path>) -> Result<Vec<Fact>, Adapte
     let facts: Facts = read(path.as_ref())?;
     Ok(facts.items().to_vec())
 }
-
 
 fn slugify(name: &str) -> String {
     // Collapse runs of separators: "Build, test, publish" and "build-test-publish"
@@ -177,7 +177,8 @@ pub fn normalize(run: &Run, jobs: &Jobs, facts: &[Fact], map: &AdapterMap) -> Ob
     // A reusable-workflow call (or a matrix leg) reports many runtime jobs that
     // all resolve to one declared job. The model describes the declared job, so
     // those collapse into a single firing rather than N.
-    let mut seen_transitions: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut seen_transitions: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
 
     // Map by JOB name: each successful job is one transition firing. Step names
     // in real workflows are freeform, but the job is the unit the spec models.

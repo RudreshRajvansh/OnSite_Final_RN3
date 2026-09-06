@@ -49,7 +49,13 @@ impl Needs {
 /// Turn a job name into a workflow-net transition id.
 pub fn slug(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -67,18 +73,22 @@ pub fn guess_effect(job: &WfJob) -> Option<&'static str> {
             step.name.clone().unwrap_or_default().to_lowercase(),
             step.uses.clone().unwrap_or_default().to_lowercase()
         );
-        let (rank, kind): (u8, &'static str) =
-            if hay.contains("publish") || hay.contains("release to") || hay.contains("npm publish") || hay.contains("docker push") || hay.contains("cargo publish") {
-                (4, "registry_write")
-            } else if hay.contains("build") || hay.contains("compile") {
-                (3, "artifact_create")
-            } else if hay.contains("test") {
-                (2, "ci_report")
-            } else if hay.contains("checkout") {
-                (1, "vcs_read")
-            } else {
-                (0, "")
-            };
+        let (rank, kind): (u8, &'static str) = if hay.contains("publish")
+            || hay.contains("release to")
+            || hay.contains("npm publish")
+            || hay.contains("docker push")
+            || hay.contains("cargo publish")
+        {
+            (4, "registry_write")
+        } else if hay.contains("build") || hay.contains("compile") {
+            (3, "artifact_create")
+        } else if hay.contains("test") {
+            (2, "ci_report")
+        } else if hay.contains("checkout") {
+            (1, "vcs_read")
+        } else {
+            (0, "")
+        };
         if rank > best {
             best = rank;
             effect = Some(kind);
@@ -125,11 +135,8 @@ pub fn generate(wf: &Workflow) -> String {
     out.push('\n');
 
     // Final marking: places nothing depends on.
-    let depended: std::collections::BTreeSet<String> = wf
-        .jobs
-        .values()
-        .flat_map(|j| j.needs.ids())
-        .collect();
+    let depended: std::collections::BTreeSet<String> =
+        wf.jobs.values().flat_map(|j| j.needs.ids()).collect();
     let finals: Vec<String> = job_ids
         .iter()
         .filter(|id| !depended.contains(**id))
@@ -170,7 +177,9 @@ pub fn generate(wf: &Workflow) -> String {
                 if has_build {
                     out.push_str("        requires_relation:\n");
                     out.push_str("          - type: derives_from\n");
-                    out.push_str("            target: artifact_create   # TODO name the producing build\n");
+                    out.push_str(
+                        "            target: artifact_create   # TODO name the producing build\n",
+                    );
                     out.push_str("            bind: { digest: $digest }\n");
                 }
             }
@@ -188,8 +197,10 @@ pub fn generate(wf: &Workflow) -> String {
         out.push('\n');
     }
 
-    let effects: std::collections::BTreeSet<&str> =
-        job_ids.iter().filter_map(|id| guess_effect(&wf.jobs[*id])).collect();
+    let effects: std::collections::BTreeSet<&str> = job_ids
+        .iter()
+        .filter_map(|id| guess_effect(&wf.jobs[*id]))
+        .collect();
     if effects.contains("registry_write") && effects.contains("artifact_create") {
         out.push_str("relations:\n");
         out.push_str("  derives_from:\n");

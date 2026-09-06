@@ -191,7 +191,9 @@ fn rollback_without_a_certificate_is_rejected() {
     assert!(!outcome.accepted());
     let rendered: Vec<String> = outcome.failures.iter().map(|f| f.render()).collect();
     assert!(
-        rendered.iter().any(|f| f.contains("no presented certificate attests")),
+        rendered
+            .iter()
+            .any(|f| f.contains("no presented certificate attests")),
         "the rejection must name the missing evidence: {:?}",
         rendered
     );

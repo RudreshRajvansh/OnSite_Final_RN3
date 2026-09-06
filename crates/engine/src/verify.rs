@@ -193,7 +193,12 @@ pub fn verify(net: &Net, obs: &Observation, options: VerifyOptions) -> VerifyOut
                 .iter()
                 .map(|c| if *c { '1' } else { '0' })
                 .collect::<String>(),
-            state.matched.iter().cloned().collect::<Vec<String>>().join(","),
+            state
+                .matched
+                .iter()
+                .cloned()
+                .collect::<Vec<String>>()
+                .join(","),
             state.slack_used
         );
         if !seen.insert(key) {
@@ -303,7 +308,10 @@ fn expand_observed(
             log.push(score, Failure::UnknownStep { step });
             continue;
         };
-        if !net.spec.principal_matches(&transition.principal, &record.principal) {
+        if !net
+            .spec
+            .principal_matches(&transition.principal, &record.principal)
+        {
             let expected = net
                 .spec
                 .principals
@@ -328,8 +336,7 @@ fn expand_observed(
         let mut cursor = 0usize;
         let mut shape_ok = true;
         for (position, effect) in record.effects.iter().enumerate() {
-            while cursor < transition.emits.len()
-                && transition.emits[cursor].effect != effect.kind
+            while cursor < transition.emits.len() && transition.emits[cursor].effect != effect.kind
             {
                 cursor += 1;
             }
@@ -496,7 +503,9 @@ fn expand_slack(
                 let mut fresh = state.fresh;
                 let mut matched_id = None;
                 if let Some(id) = target {
-                    let Some(effect) = obs.effect(id) else { continue };
+                    let Some(effect) = obs.effect(id) else {
+                        continue;
+                    };
                     match match_template(&transition.emits[0], effect, &env, &transition.id) {
                         Ok(next) => {
                             env = next;

@@ -9,7 +9,12 @@ use axum::{
 };
 use engine::{permissiveness, verify, Net, Observation, VerifyOptions};
 use serde_json::{json, Value};
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+};
 use tower_http::{cors::CorsLayer, services::ServeDir};
 
 struct SpecEntry {
@@ -28,6 +33,19 @@ struct AppState {
 }
 
 type Shared = Arc<AppState>;
+
+/// A panic anywhere in a handler that holds this lock would poison it and make
+/// every later request panic too, turning one bad request into a permanent
+/// outage. The registry is insert-only and each entry is fully built before it
+/// goes in, so a poisoned lock never exposes a half-written entry: recovering
+/// is correct here, and refusing to serve is not.
+fn specs_read(state: &AppState) -> RwLockReadGuard<'_, HashMap<String, SpecEntry>> {
+    state.specs.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn specs_write(state: &AppState) -> RwLockWriteGuard<'_, HashMap<String, SpecEntry>> {
+    state.specs.write().unwrap_or_else(|e| e.into_inner())
+}
 
 fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
@@ -77,7 +95,10 @@ fn present_from_run(state: &AppState, evidence_id: &str) -> Result<(Vec<String>,
     // unsatisfiable set, which is the expensive part of the whole system, and a
     // rejected run attests nothing anyway.
     if !outcome.accepted() {
-        return Err(format!("run `{}` was not accepted, so it attests nothing", id));
+        return Err(format!(
+            "run `{}` was not accepted, so it attests nothing",
+            id
+        ));
     }
     let certificate = explain::explain(
         &state.net,
@@ -239,7 +260,12 @@ async fn get_run(
         Ok(o) => o,
         Err(_) => return not_found("no such run".into()).into_response(),
     };
-    let mut body = evaluate(&state, &obs, slack_of(&params), params.get("evidence").map(String::as_str));
+    let mut body = evaluate(
+        &state,
+        &obs,
+        slack_of(&params),
+        params.get("evidence").map(String::as_str),
+    );
     body["id"] = json!(id);
     Json(body).into_response()
 }
@@ -299,7 +325,13 @@ async fn post_verify(
     if let Err(e) = body.validate() {
         return bad_request(e.to_string()).into_response();
     }
-    Json(evaluate(&state, &body, slack_of(&params), params.get("evidence").map(String::as_str))).into_response()
+    Json(evaluate(
+        &state,
+        &body,
+        slack_of(&params),
+        params.get("evidence").map(String::as_str),
+    ))
+    .into_response()
 }
 
 async fn post_ingest(
@@ -319,7 +351,13 @@ async fn post_ingest(
     if let Err(e) = obs.validate() {
         return bad_request(e.to_string()).into_response();
     }
-    Json(evaluate(&state, &obs, slack_of(&params), params.get("evidence").map(String::as_str))).into_response()
+    Json(evaluate(
+        &state,
+        &obs,
+        slack_of(&params),
+        params.get("evidence").map(String::as_str),
+    ))
+    .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -359,7 +397,9 @@ async fn post_onboard(
     let spec_yaml = wsl::generate::generate(&wf);
     let loaded = match wsl::parse_str(&spec_yaml) {
         Ok(l) => l,
-        Err(e) => return bad_request(format!("generated spec failed to parse: {}", e)).into_response(),
+        Err(e) => {
+            return bad_request(format!("generated spec failed to parse: {}", e)).into_response()
+        }
     };
     let sound = loaded.report.is_sound();
     let jobs = wf.jobs.len();
@@ -390,9 +430,13 @@ async fn post_onboard(
                 Some("registry_write") => vec![adapters::EffectRule {
                     kind: "registry_write".into(),
                     args: [
-                        ("scope".to_string(), "registry://prod/${repository_name}".to_string()),
+                        (
+                            "scope".to_string(),
+                            "registry://prod/${repository_name}".to_string(),
+                        ),
                         ("digest".to_string(), "${outputs.digest}".to_string()),
-                    ].into(),
+                    ]
+                    .into(),
                 }],
                 Some("ci_report") => vec![adapters::EffectRule {
                     kind: "ci_report".into(),
@@ -404,20 +448,33 @@ async fn post_onboard(
                 }],
                 _ => vec![],
             };
-            jobs_map.insert(job_name.clone(), adapters::StepRule { step: transition, effects });
+            jobs_map.insert(
+                job_name.clone(),
+                adapters::StepRule {
+                    step: transition,
+                    effects,
+                },
+            );
         }
         let mut repo_map = state.map.clone();
         repo_map.jobs = jobs_map;
 
         let net = Net::compile(&loaded.spec);
-        let mut specs = state.specs.write().unwrap();
+        let mut specs = specs_write(&state);
         // Onboarding is unauthenticated in this build, so the registry is capped
         // rather than allowed to grow without bound.
         if specs.len() >= 256 && !specs.contains_key(&key) {
             drop(specs);
             return bad_request("spec registry is full".into()).into_response();
         }
-        specs.insert(key.clone(), SpecEntry { loaded, net, map: Some(repo_map) });
+        specs.insert(
+            key.clone(),
+            SpecEntry {
+                loaded,
+                net,
+                map: Some(repo_map),
+            },
+        );
     }
     Json(json!({
         "name": key,
@@ -466,13 +523,9 @@ async fn post_live(
     let repo_map = payload
         .spec
         .as_ref()
-        .and_then(|n| state.specs.read().unwrap().get(n).and_then(|e| e.map.clone()));
-    let obs = adapters::github::normalize(
-        &run,
-        &jobs,
-        &facts,
-        repo_map.as_ref().unwrap_or(&state.map),
-    );
+        .and_then(|n| specs_read(&state).get(n).and_then(|e| e.map.clone()));
+    let obs =
+        adapters::github::normalize(&run, &jobs, &facts, repo_map.as_ref().unwrap_or(&state.map));
     if let Err(e) = obs.validate() {
         return bad_request(e.to_string()).into_response();
     }
@@ -492,7 +545,7 @@ async fn post_live(
         .into_response();
     }
 
-    let specs = state.specs.read().unwrap();
+    let specs = specs_read(&state);
     let chosen: &SpecEntry = if let Some(e) = payload.spec.as_ref().and_then(|n| specs.get(n)) {
         e
     } else {
@@ -500,18 +553,39 @@ async fn post_live(
             obs.records.iter().filter_map(|r| r.step.clone()).collect();
         let mut best: Option<(&SpecEntry, isize)> = None;
         for entry in specs.values() {
-            let ids: std::collections::BTreeSet<&str> =
-                entry.loaded.spec.transitions.iter().map(|t| t.id.as_str()).collect();
+            let ids: std::collections::BTreeSet<&str> = entry
+                .loaded
+                .spec
+                .transitions
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect();
             let covered = steps.iter().filter(|s| ids.contains(s.as_str())).count();
-            if covered == 0 { continue; }
+            if covered == 0 {
+                continue;
+            }
             let extra = ids.len().saturating_sub(covered);
             let score = covered as isize * 10 - extra as isize;
-            if best.map(|(_, b)| score > b).unwrap_or(true) { best = Some((entry, score)); }
+            if best.map(|(_, b)| score > b).unwrap_or(true) {
+                best = Some((entry, score));
+            }
         }
-        match best {
-            Some((e, _)) => e,
-            None => specs.get("release").or_else(|| specs.values().next())
-                .expect("at least one spec must be loaded"),
+        match best
+            .map(|(e, _)| e)
+            .or_else(|| specs.get("release").or_else(|| specs.values().next()))
+        {
+            Some(e) => e,
+            // Startup refuses to serve with an empty registry and entries are
+            // never removed, so this is unreachable. It answers rather than
+            // panics anyway: a panic here would poison the registry lock and
+            // take every later request down with it.
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "error": "no workflow model is loaded" })),
+                )
+                    .into_response()
+            }
         }
     };
     let loaded = &chosen.loaded;
@@ -586,7 +660,14 @@ async fn main() {
             match wsl::load_checked(&path) {
                 Ok(l) => {
                     let n = Net::compile(&l.spec);
-                    specs.insert(name, SpecEntry { loaded: l, net: n, map: None });
+                    specs.insert(
+                        name,
+                        SpecEntry {
+                            loaded: l,
+                            net: n,
+                            map: None,
+                        },
+                    );
                 }
                 Err(e) => eprintln!("skipping unsound spec {}: {}", path.display(), e),
             }
@@ -606,15 +687,23 @@ async fn main() {
         .or_else(|_| adapters::load_map("spec/adapter.map.json"))
         .unwrap_or_default();
 
-    let policy = policy::load(env_or("MASKEDRUNNER_POLICY", "demo/bot-policy.json"))
-        .unwrap_or(policy::BotPolicy {
+    let policy = policy::load(env_or("MASKEDRUNNER_POLICY", "demo/bot-policy.json")).unwrap_or(
+        policy::BotPolicy {
             identity: String::new(),
             allowed_actions: vec![
-                "vcs_read".into(), "artifact_create".into(), "ci_report".into(),
-                "secret_read".into(), "registry_write".into(),
+                "vcs_read".into(),
+                "artifact_create".into(),
+                "ci_report".into(),
+                "secret_read".into(),
+                "registry_write".into(),
             ],
-            allowed_scopes: vec!["repo/*".into(), "secrets://prod/*".into(), "registry://prod/*".into()],
-        });
+            allowed_scopes: vec![
+                "repo/*".into(),
+                "secrets://prod/*".into(),
+                "registry://prod/*".into(),
+            ],
+        },
+    );
 
     let state: Shared = Arc::new(AppState {
         loaded,
@@ -640,9 +729,17 @@ async fn main() {
         .fallback_service(ServeDir::new(env_or("MASKEDRUNNER_WEB", "web")))
         .with_state(state);
 
-    let addr: SocketAddr = env_or("MASKEDRUNNER_ADDR", "127.0.0.1:8787")
-        .parse()
-        .expect("MASKEDRUNNER_ADDR must be host:port");
+    let raw_addr = env_or("MASKEDRUNNER_ADDR", "127.0.0.1:8787");
+    let addr: SocketAddr = match raw_addr.parse() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!(
+                "error: MASKEDRUNNER_ADDR is `{}`, which is not host:port ({}). Try 127.0.0.1:8787",
+                raw_addr, e
+            );
+            std::process::exit(2);
+        }
+    };
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
@@ -651,5 +748,8 @@ async fn main() {
         }
     };
     println!("maskedrunner listening on http://{}", addr);
-    axum::serve(listener, app).await.expect("server failed");
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("error: server stopped: {}", e);
+        std::process::exit(2);
+    }
 }

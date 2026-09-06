@@ -257,13 +257,10 @@ pub fn normalize(bundle: &Bundle, map: &AdapterMap) -> Observation {
         }
         let effects = render_effects(std::slice::from_ref(rule), &context, &event.id);
         if let (Some(provenance), Some(effect)) = (&event.provenance, effects.first()) {
-            let target = records
-                .iter()
-                .flat_map(|r| r.effects.iter())
-                .find(|e| {
-                    e.kind == "artifact_create"
-                        && e.args.get("digest") == Some(&provenance.build_digest)
-                });
+            let target = records.iter().flat_map(|r| r.effects.iter()).find(|e| {
+                e.kind == "artifact_create"
+                    && e.args.get("digest") == Some(&provenance.build_digest)
+            });
             if let Some(target) = target {
                 edges.push(ObservedEdge {
                     ty: "derives_from".to_string(),

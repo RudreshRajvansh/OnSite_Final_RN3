@@ -85,11 +85,7 @@ impl Fact {
                     args.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
                 format!("{}({})", kind, rendered.join(", "))
             }
-            Fact::Edge {
-                relation,
-                from,
-                to,
-            } => format!("{}({} -> {})", relation, from, to),
+            Fact::Edge { relation, from, to } => format!("{}({} -> {})", relation, from, to),
         }
     }
 }
@@ -213,12 +209,7 @@ impl Observation {
         }
         for indices in planes.values() {
             let mut sorted = indices.clone();
-            sorted.sort_by(|a, b| {
-                self.records[*a]
-                    .ts
-                    .cmp(&self.records[*b].ts)
-                    .then(a.cmp(b))
-            });
+            sorted.sort_by(|a, b| self.records[*a].ts.cmp(&self.records[*b].ts).then(a.cmp(b)));
             for w in sorted.windows(2) {
                 preds[w[1]].insert(w[0]);
             }
@@ -310,11 +301,9 @@ impl Observation {
         let kept_edges: BTreeSet<(&str, &str, &str)> = keep
             .iter()
             .filter_map(|f| match f {
-                Fact::Edge {
-                    relation,
-                    from,
-                    to,
-                } => Some((relation.as_str(), from.as_str(), to.as_str())),
+                Fact::Edge { relation, from, to } => {
+                    Some((relation.as_str(), from.as_str(), to.as_str()))
+                }
                 _ => None,
             })
             .collect();

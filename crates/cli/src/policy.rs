@@ -82,7 +82,8 @@ pub fn evaluate(policy: &BotPolicy, obs: &Observation) -> PolicyOutcome {
         }
         for effect in &record.effects {
             checked_actions += 1;
-            if !policy.allowed_actions.is_empty() && !policy.allowed_actions.contains(&effect.kind) {
+            if !policy.allowed_actions.is_empty() && !policy.allowed_actions.contains(&effect.kind)
+            {
                 findings.push(PolicyFinding {
                     subject: effect.id.clone(),
                     detail: format!("action `{}` is not permitted", effect.kind),

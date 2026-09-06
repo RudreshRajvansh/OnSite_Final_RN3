@@ -32,8 +32,7 @@ pub fn evaluate(policy: &BotPolicy, obs: &Observation) -> (bool, Vec<String>) {
             }
         }
         for effect in &record.effects {
-            if !policy.allowed_actions.is_empty()
-                && !policy.allowed_actions.contains(&effect.kind)
+            if !policy.allowed_actions.is_empty() && !policy.allowed_actions.contains(&effect.kind)
             {
                 findings.push(format!("action {} is not permitted", effect.kind));
                 continue;

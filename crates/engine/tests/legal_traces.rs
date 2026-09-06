@@ -34,7 +34,10 @@ fn concrete(raw: &str, env: &BTreeMap<String, String>) -> String {
     match classify(raw) {
         Pattern::Lit(v) => v,
         Pattern::Glob(p) => p.replace('*', "app"),
-        Pattern::Var(name) => env.get(&name).cloned().unwrap_or_else(|| "unbound".to_string()),
+        Pattern::Var(name) => env
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| "unbound".to_string()),
     }
 }
 
@@ -105,16 +108,15 @@ fn generate(net: &Net, seed: u64) -> Option<Observation> {
                     .iter()
                     .map(|(k, raw)| (k.clone(), concrete(raw, &env)))
                     .collect();
-                let target = records
-                    .iter()
-                    .flat_map(|r| r.effects.iter())
-                    .rev()
-                    .find(|candidate| {
-                        candidate.kind == obligation.target
-                            && wanted
-                                .iter()
-                                .all(|(k, v)| candidate.args.get(k) == Some(v))
-                    })?;
+                let target =
+                    records
+                        .iter()
+                        .flat_map(|r| r.effects.iter())
+                        .rev()
+                        .find(|candidate| {
+                            candidate.kind == obligation.target
+                                && wanted.iter().all(|(k, v)| candidate.args.get(k) == Some(v))
+                        })?;
                 edges.push(ObservedEdge {
                     ty: obligation.ty.clone(),
                     from: effect.id.clone(),
@@ -166,7 +168,8 @@ fn every_legal_trace_is_accepted() {
         let Some(obs) = generate(&net, seed) else {
             continue;
         };
-        obs.validate().expect("generated observation must be well formed");
+        obs.validate()
+            .expect("generated observation must be well formed");
         let outcome = verify(&net, &obs, VerifyOptions::for_observation(&obs, 0));
         assert!(
             outcome.accepted(),
@@ -193,7 +196,11 @@ fn every_legal_trace_is_accepted() {
         generated,
         shapes.len()
     );
-    assert!(generated >= 1000, "expected a large legal corpus, got {}", generated);
+    assert!(
+        generated >= 1000,
+        "expected a large legal corpus, got {}",
+        generated
+    );
     assert!(
         shapes.len() >= 100,
         "expected many structurally distinct legal traces, got {}",

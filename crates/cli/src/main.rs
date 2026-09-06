@@ -11,7 +11,11 @@ const DEFAULT_MAP: &str = "spec/adapter.map.json";
 const DEFAULT_POLICY: &str = "demo/bot-policy.json";
 
 #[derive(Parser)]
-#[command(name = "maskedrunner", version, about = "workflow integrity verification")]
+#[command(
+    name = "maskedrunner",
+    version,
+    about = "workflow integrity verification"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -112,7 +116,15 @@ fn main() -> ExitCode {
             certificate,
             evidence,
             trusted_key,
-        } => run_verify(spec, observation, slack, json, certificate, evidence, trusted_key),
+        } => run_verify(
+            spec,
+            observation,
+            slack,
+            json,
+            certificate,
+            evidence,
+            trusted_key,
+        ),
         Command::Permissiveness {
             spec,
             depth,
@@ -121,13 +133,21 @@ fn main() -> ExitCode {
         } => run_permissiveness(spec, depth, cap, budget),
         Command::Check { certificate } => run_check(certificate),
         Command::Ingest { bundle, map, out } => run_ingest(bundle, map, out),
-        Command::IngestActions { run, jobs, facts, map, out } => {
-            run_ingest_actions(run, jobs, facts, map, out)
-        }
+        Command::IngestActions {
+            run,
+            jobs,
+            facts,
+            map,
+            out,
+        } => run_ingest_actions(run, jobs, facts, map, out),
         Command::Generate { workflow, out } => run_generate(workflow, out),
-        Command::Scenario { spec, map, policy, legit, stolen } => {
-            run_scenario(spec, map, policy, legit, stolen)
-        }
+        Command::Scenario {
+            spec,
+            map,
+            policy,
+            legit,
+            stolen,
+        } => run_scenario(spec, map, policy, legit, stolen),
         Command::Mutate {
             spec,
             observation,
@@ -277,7 +297,10 @@ fn run_verify(
     );
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&issued).unwrap());
+        match serde_json::to_string_pretty(&issued) {
+            Ok(body) => println!("{}", body),
+            Err(e) => return fail(&e.to_string()),
+        }
     } else {
         report(&loaded, &obs, &outcome, robust, &issued);
     }
@@ -311,7 +334,11 @@ fn report(
     robust: Option<bool>,
     issued: &Certificate,
 ) {
-    let verdict = if outcome.accepted() { "ACCEPT" } else { "REJECT" };
+    let verdict = if outcome.accepted() {
+        "ACCEPT"
+    } else {
+        "REJECT"
+    };
     match robust {
         Some(true) => println!("VERDICT   {}  (robust: holds at maximum slack)", verdict),
         Some(false) => println!("VERDICT   {}  (explainable by unobserved steps)", verdict),
@@ -458,7 +485,11 @@ fn run_mutate(spec: PathBuf, observation: PathBuf, slack: usize) -> ExitCode {
     println!("RUN       {}", obs.run_id);
     println!(
         "BASELINE  {}",
-        if baseline.accepted() { "ACCEPT" } else { "REJECT" }
+        if baseline.accepted() {
+            "ACCEPT"
+        } else {
+            "REJECT"
+        }
     );
     if baseline.accepted() {
         println!("Mutation testing only applies to a rejected run. This one is accepted.");
@@ -482,7 +513,11 @@ fn run_mutate(spec: PathBuf, observation: PathBuf, slack: usize) -> ExitCode {
         println!(
             "  {:<62} {}",
             mutant.id,
-            if outcome.accepted() { "ACCEPT" } else { "REJECT" }
+            if outcome.accepted() {
+                "ACCEPT"
+            } else {
+                "REJECT"
+            }
         );
         if outcome.accepted() {
             load_bearing.push(mutant);
@@ -619,7 +654,10 @@ fn run_generate(workflow: PathBuf, out: Option<PathBuf>) -> ExitCode {
             }
             let jobs = wf.jobs.len();
             eprintln!("GENERATED {} from {} job(s)", path.display(), jobs);
-            eprintln!("Now edit the TODO lines, then: maskedrunner lint --spec {}", path.display());
+            eprintln!(
+                "Now edit the TODO lines, then: maskedrunner lint --spec {}",
+                path.display()
+            );
         }
         None => print!("{}", spec),
     }
@@ -655,7 +693,10 @@ fn run_scenario(
     );
     println!(
         "   rotated      {}",
-        bot.credential.last_rotated.clone().unwrap_or_else(|| "never".to_string())
+        bot.credential
+            .last_rotated
+            .clone()
+            .unwrap_or_else(|| "never".to_string())
     );
     println!("   may perform  {}", bot.allowed_actions.join(", "));
     println!("   may write to {}", bot.allowed_scopes.join(", "));
@@ -683,7 +724,9 @@ fn run_scenario(
     println!();
     match (a, b) {
         (Some(true), Some(false)) => {
-            println!("The permission check passed both runs. It is answering a different question:");
+            println!(
+                "The permission check passed both runs. It is answering a different question:"
+            );
             println!("may this identity do this? The answer is yes in both cases, because the");
             println!("credential is real. Reachability asks whether the outcome was producible.");
             ExitCode::SUCCESS
@@ -774,7 +817,11 @@ fn run_ingest(bundle: PathBuf, map: PathBuf, out: Option<PathBuf>) -> ExitCode {
             println!("RUN       {}", obs.run_id);
             println!(
                 "PLANES    {}",
-                obs.planes.keys().cloned().collect::<Vec<String>>().join(", ")
+                obs.planes
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<String>>()
+                    .join(", ")
             );
             println!(
                 "RECORDS   {} ({} with a declared step, {} effect-only)",
