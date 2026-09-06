@@ -34,6 +34,8 @@ enum Command {
         json: bool,
         #[arg(long)]
         certificate: Option<PathBuf>,
+        #[arg(long)]
+        evidence: Vec<PathBuf>,
     },
     Permissiveness {
         #[arg(long, default_value = DEFAULT_SPEC)]
@@ -106,7 +108,8 @@ fn main() -> ExitCode {
             slack,
             json,
             certificate,
-        } => run_verify(spec, observation, slack, json, certificate),
+            evidence,
+        } => run_verify(spec, observation, slack, json, certificate, evidence),
         Command::Permissiveness {
             spec,
             depth,
@@ -157,12 +160,62 @@ fn run_lint(path: PathBuf) -> ExitCode {
     }
 }
 
+struct PresentedEvidence {
+    run_id: String,
+    digests: Vec<String>,
+}
+
+fn load_evidence(path: &PathBuf, workflow: &str) -> Result<PresentedEvidence, String> {
+    let body = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+    let signed: SignedCertificate =
+        serde_json::from_str(&body).map_err(|e| format!("{}: {}", path.display(), e))?;
+
+    verify_signature(&signed).map_err(|e| format!("{}: {}", path.display(), e))?;
+
+    let recomputed = signed
+        .certificate
+        .payload_hash()
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+    if recomputed != signed.payload_sha256 {
+        return Err(format!(
+            "{}: payload hash does not match the signed body",
+            path.display()
+        ));
+    }
+    if signed.certificate.verdict != "accept" {
+        return Err(format!(
+            "{}: certificate records a `{}` verdict, so it attests nothing",
+            path.display(),
+            signed.certificate.verdict
+        ));
+    }
+    if signed.certificate.workflow != workflow {
+        return Err(format!(
+            "{}: certificate is for workflow `{}`, not `{}`",
+            path.display(),
+            signed.certificate.workflow,
+            workflow
+        ));
+    }
+    if signed.certificate.attested_digests.is_empty() {
+        return Err(format!(
+            "{}: certificate attests no artifact digest",
+            path.display()
+        ));
+    }
+    Ok(PresentedEvidence {
+        run_id: signed.certificate.run_id.clone(),
+        digests: signed.certificate.attested_digests,
+    })
+}
+
 fn run_verify(
     spec: PathBuf,
     observation: PathBuf,
     slack: usize,
     json: bool,
     certificate: Option<PathBuf>,
+    evidence: Vec<PathBuf>,
 ) -> ExitCode {
     let loaded = match wsl::load_checked(&spec) {
         Ok(l) => l,
@@ -172,7 +225,24 @@ fn run_verify(
         Ok(o) => o,
         Err(e) => return fail(&e.to_string()),
     };
-    let net = Net::compile(&loaded.spec);
+    let mut net = Net::compile(&loaded.spec);
+
+    for path in &evidence {
+        match load_evidence(path, &loaded.spec.workflow) {
+            Ok(presented) => {
+                if !json {
+                    println!(
+                        "EVIDENCE  {} attests {} [{}]",
+                        presented.run_id,
+                        presented.digests.join(", "),
+                        path.display()
+                    );
+                }
+                net.present_evidence(presented.digests);
+            }
+            Err(e) => return fail(&e),
+        }
+    }
 
     let options = VerifyOptions::for_observation(&obs, slack);
     let outcome = verify(&net, &obs, options);

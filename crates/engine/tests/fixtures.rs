@@ -177,3 +177,58 @@ fn unmatched_effect_explains_every_step_and_blocks_none() {
         "every recorded step is legal here; the effect is what has no cause"
     );
 }
+
+fn run_with_evidence(fixture: &str, digests: &[&str]) -> engine::VerifyOutcome {
+    let obs = Observation::load(format!("../../fixtures/{}", fixture)).expect("fixture must load");
+    let mut net = net();
+    net.present_evidence(digests.iter().map(|d| d.to_string()));
+    verify(&net, &obs, VerifyOptions::for_observation(&obs, 0))
+}
+
+#[test]
+fn rollback_without_a_certificate_is_rejected() {
+    let outcome = run("case4-rollback.json", 0);
+    assert!(!outcome.accepted());
+    let rendered: Vec<String> = outcome.failures.iter().map(|f| f.render()).collect();
+    assert!(
+        rendered.iter().any(|f| f.contains("no presented certificate attests")),
+        "the rejection must name the missing evidence: {:?}",
+        rendered
+    );
+}
+
+#[test]
+fn rollback_with_a_certificate_for_that_digest_is_accepted() {
+    let outcome = run_with_evidence("case4-rollback.json", &["sha256:AA11"]);
+    assert!(outcome.accepted(), "{:?}", outcome.failures);
+    assert_eq!(
+        outcome.witness_path(),
+        "checkout -> restore_prior_artifact -> publish_standard"
+    );
+}
+
+#[test]
+fn a_certificate_admits_only_the_digest_it_attests() {
+    // Presenting real evidence must not become a skeleton key: the attested
+    // digest is the only one that can be restored under it.
+    let outcome = run_with_evidence("case5-rollback-forged.json", &["sha256:AA11"]);
+    assert!(!outcome.accepted());
+    let rendered: Vec<String> = outcome.failures.iter().map(|f| f.render()).collect();
+    assert!(
+        rendered.iter().any(|f| f.contains("sha256:DEAD")),
+        "the rejection must name the digest that was never produced: {:?}",
+        rendered
+    );
+}
+
+#[test]
+fn rollback_cannot_be_smuggled_in_as_an_unobserved_step() {
+    // The slack path fires transitions nobody logged. An attested binding must
+    // not be satisfiable by a fresh variable, or maximum slack would silently
+    // authorise every rollback.
+    let outcome = run("case5-rollback-forged.json", 12);
+    assert!(
+        !outcome.accepted(),
+        "an unobserved restore must not be inventable under slack"
+    );
+}

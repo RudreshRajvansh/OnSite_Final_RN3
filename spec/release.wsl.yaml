@@ -58,6 +58,16 @@ transitions:
       - effect: approval_issued
         grant: break_glass
 
+  - id: restore_prior_artifact
+    principal: ci_runner
+    consumes: [source]
+    produces: [artifact, tested, source]
+    binds:
+      digest: attested
+    emits:
+      - effect: artifact_create
+        digest: $digest
+
   - id: publish_standard
     principal: ci_runner
     consumes: [tested, artifact]

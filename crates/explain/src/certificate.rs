@@ -26,6 +26,8 @@ pub struct Certificate {
     pub mus_oracle_calls: usize,
     pub failed_obligations: Vec<String>,
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub attested_digests: Vec<String>,
     pub issued_at_unix: u64,
 }
 

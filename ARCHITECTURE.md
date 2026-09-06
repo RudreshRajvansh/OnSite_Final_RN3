@@ -299,9 +299,39 @@ to argue with last:
   a scanner's job. MaskedRunner verifies the workflow could have produced the
   artifact, not that its contents are benign.
 
-Known gaps, stated plainly: rollback of an old artifact rejects today (the
-producing build is outside the observation window; the fix is to carry the
-earlier certificate forward); cache poisoning is a data-integrity problem one
+**Rollback** used to be the sharpest false positive: republishing a known-good
+artifact rejects, because the build that produced it happened weeks ago and is
+nowhere in this run's observation. That is now handled by carrying the earlier
+certificate forward rather than by special-casing the verdict.
+
+A transition may declare a binding as `attested` instead of `fresh`:
+
+```yaml
+  - id: restore_prior_artifact
+    consumes: [source]
+    produces: [artifact, tested, source]
+    binds:
+      digest: attested
+```
+
+An `attested` variable can only take a value that some certificate presented
+with `--evidence` attests. The certificate carries `attested_digests`, populated
+only on an accept, and is checked for signature, payload hash, verdict and
+workflow before a single digest is believed. So the rollback is not an exception
+to reachability — it is an ordinary transition whose binding source happens to be
+a signature rather than a compiler. The restore produces both `artifact` and
+`tested`, because that is precisely what the certificate proves already happened.
+
+Three properties fall out, and each has a test:
+
+- with no certificate, the restore cannot fire at all, and the rejection names
+  the missing evidence rather than blaming the publish
+- a certificate admits only the digest it names, so presenting real evidence for
+  one artifact does not launder a different one
+- the check runs on the slack path too, so a rollback cannot be smuggled in as a
+  step nobody logged
+
+Remaining gaps, stated plainly: cache poisoning is a data-integrity problem one
 layer below reachability; anything inside a permitted transition's blast radius
 is accepted by design and reported by the meter.
 

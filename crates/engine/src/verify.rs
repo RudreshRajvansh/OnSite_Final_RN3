@@ -407,6 +407,10 @@ fn expand_observed(
                     env.insert(bind.clone(), format!("~fresh{}", fresh));
                 }
             }
+            if let Err(failure) = net.check_attested(transition, &env) {
+                log.push(score, failure);
+                continue;
+            }
             if let Some(guard) = &transition.guard {
                 if !eval_guard(guard, &env) {
                     log.push(
@@ -515,6 +519,9 @@ fn expand_slack(
                         fresh += 1;
                         env.insert(bind.clone(), format!("~fresh{}", fresh));
                     }
+                }
+                if net.check_attested(transition, &env).is_err() {
+                    continue;
                 }
                 if let Some(guard) = &transition.guard {
                     if !eval_guard(guard, &env) {

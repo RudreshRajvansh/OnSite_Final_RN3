@@ -54,6 +54,21 @@ pub fn explain(
         ));
     }
 
+    let mut attested_digests: Vec<String> = Vec::new();
+    if outcome.accepted() {
+        let mut seen = std::collections::BTreeSet::new();
+        for record in &obs.records {
+            for effect in &record.effects {
+                if let Some(digest) = effect.args.get("digest") {
+                    if !digest.starts_with('~') && !digest.starts_with("<unresolved:") {
+                        seen.insert(digest.clone());
+                    }
+                }
+            }
+        }
+        attested_digests = seen.into_iter().collect();
+    }
+
     Certificate {
         kind: CERTIFICATE_KIND.to_string(),
         engine: format!("maskedrunner {}", env!("CARGO_PKG_VERSION")),
@@ -79,6 +94,7 @@ pub fn explain(
         mus_oracle_calls: core.oracle_calls,
         failed_obligations: outcome.failures.iter().map(|f| f.render()).collect(),
         notes,
+        attested_digests,
         issued_at_unix: certificate::now_unix(),
     }
 }

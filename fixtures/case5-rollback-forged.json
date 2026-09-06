@@ -1,0 +1,57 @@
+{
+  "run_id": "case5-rollback-forged",
+  "planes": {
+    "runner": {
+      "complete": true,
+      "carries": ["vcs_read", "artifact_create", "ci_report"]
+    },
+    "registry": {
+      "complete": true,
+      "carries": ["registry_write"]
+    },
+    "audit": {
+      "complete": true,
+      "carries": ["approval_issued"]
+    }
+  },
+  "records": [
+    {
+      "id": "r1",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "checkout",
+      "ts": "2026-09-19T03:14:00Z",
+      "effects": [
+        { "id": "e1", "kind": "vcs_read", "scope": "repo/app" }
+      ]
+    },
+    {
+      "id": "r2",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "restore_prior_artifact",
+      "ts": "2026-09-19T03:14:32Z",
+      "effects": [
+        { "id": "e2", "kind": "artifact_create", "digest": "sha256:DEAD" }
+      ]
+    },
+    {
+      "id": "r3",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "publish_standard",
+      "ts": "2026-09-19T03:15:05Z",
+      "effects": [
+        {
+          "id": "e3",
+          "kind": "registry_write",
+          "scope": "registry://prod/app",
+          "digest": "sha256:DEAD"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    { "type": "derives_from", "from": "e3", "to": "e2" }
+  ]
+}

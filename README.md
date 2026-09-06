@@ -47,7 +47,7 @@ cargo build --release
 The service listens on `127.0.0.1:8787` and serves the visualiser from `web/`. Everything runs
 offline. There are no CDN or network dependencies anywhere in the stack.
 
-## The three cases
+## The four cases
 
 ### 1. Legitimate
 
@@ -90,6 +90,50 @@ WITNESS   grant_emergency_approval -> checkout -> build -> build -> publish_brea
 This is where behavioural detection fails and reachability does not. The map has a track for this
 run, and the witness is that track. The approval token is consumed by the publish, so a second
 publish on the same approval finds no token. There is a test for it rather than a claim about it.
+
+### 4. Rollback, which used to be the sharpest false positive
+
+Production breaks at 3am and you republish last month's artifact. Nothing in this run built it, so
+a reachability check should reject — and rejecting the one thing you do during an incident makes
+the whole system unusable.
+
+```bash
+./demo/rollback.sh
+```
+
+```
+VERDICT   REJECT  (robust: holds at maximum slack)
+FAILED OBLIGATION
+  `restore_prior_artifact` binds $digest to sha256:AA11 but no presented
+  certificate attests that it was ever legally produced
+```
+
+Present the certificate the original release issued, and the same run accepts:
+
+```
+$ maskedrunner verify --observation fixtures/case4-rollback.json --evidence release.cert.json
+EVIDENCE  case1-legitimate attests sha256:AA11 [release.cert.json]
+VERDICT   ACCEPT
+WITNESS   checkout -> restore_prior_artifact -> publish_standard
+```
+
+This is not an exception carved into the verdict. A transition can declare a binding as `attested`
+rather than `fresh`, and an `attested` variable may only take a value that a presented certificate
+vouches for. Rollback is an ordinary transition whose binding source is a signature instead of a
+compiler. Because the certificate proves that digest already passed build and test, the restore
+produces both `artifact` and `tested`.
+
+The certificate is evidence for the digest it names and nothing else:
+
+```
+$ maskedrunner verify --observation fixtures/case5-rollback-forged.json --evidence release.cert.json
+VERDICT   REJECT  (robust: holds at maximum slack)
+  `restore_prior_artifact` binds $digest to sha256:DEAD but no presented
+  certificate attests that it was ever legally produced
+```
+
+Edit the certificate to name a digest it never saw and it stops verifying at the signature, which
+is exit 2 — no verdict reached — rather than a rejection.
 
 ## Real incidents
 
@@ -134,7 +178,7 @@ The fuzzer generates random legal executions from the net, none of which appear 
 specification:
 
 ```
-generated 3977 legal traces, 511 structurally distinct, all accepted
+generated 3996 legal traces, 904 structurally distinct, all accepted
 ```
 
 Mutation testing shows that the rejection is caused by named clauses rather than by an accident of
@@ -170,7 +214,7 @@ crates/
   api/        axum service, serves the visualiser
   cli/        maskedrunner binary
 spec/         release.wsl.yaml, adapter.map.json
-fixtures/     the three cases, held-out attacks, raw incident bundles
+fixtures/     the four cases, held-out attacks, raw incident bundles
 web/          net view, effect graph overlay, witness playback
 ```
 
@@ -257,6 +301,7 @@ polynomial free-choice one, and the linter says so rather than hiding it.
 cargo test --workspace
 ```
 
-16 tests: spec lint, the three cases pinned with their exact witnesses, rejection robustness under
+31 tests: spec lint, the four cases pinned with their exact witnesses, rejection robustness under
 slack, single-use approval enforcement, the cap-js replay with its provenance control, the two
-held-out attacks, and the legal-trace fuzzer.
+held-out attacks, certificate-backed rollback and the three ways it can be abused, the GitHub
+adapter's real payload shapes, and the legal-trace fuzzer.

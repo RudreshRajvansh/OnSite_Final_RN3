@@ -67,6 +67,7 @@ pub struct Transition {
 #[serde(rename_all = "snake_case")]
 pub enum BindMode {
     Fresh,
+    Attested,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

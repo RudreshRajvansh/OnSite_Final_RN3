@@ -62,6 +62,9 @@ fn generate(net: &Net, seed: u64) -> Option<Observation> {
             if net.missing_place(&marking, transition).is_some() {
                 continue;
             }
+            if !transition.attested_binds.is_empty() && net.attested.is_empty() {
+                continue;
+            }
             for choice in net.choices(&marking, transition) {
                 if net.merge_env(&marking, transition, &choice).is_some() {
                     candidates.push((transition, choice));
@@ -74,8 +77,14 @@ fn generate(net: &Net, seed: u64) -> Option<Observation> {
         let (transition, choice) = candidates[rng.below(candidates.len())].clone();
         let mut env = net.merge_env(&marking, transition, &choice)?;
         for bind in &transition.binds {
-            minted += 1;
-            env.insert(bind.clone(), format!("sha256:GEN{:04}", minted));
+            if transition.attested_binds.contains(bind) {
+                let pool: Vec<&String> = net.attested.iter().collect();
+                let pick = pool[rng.below(pool.len())].clone();
+                env.insert(bind.clone(), pick);
+            } else {
+                minted += 1;
+                env.insert(bind.clone(), format!("sha256:GEN{:04}", minted));
+            }
         }
 
         let record_id = format!("s{}", step);
@@ -140,7 +149,11 @@ fn generate(net: &Net, seed: u64) -> Option<Observation> {
 
 fn net() -> Net {
     let loaded = wsl::load_checked(SPEC).expect("specification must load and lint clean");
-    Net::compile(&loaded.spec)
+    let mut net = Net::compile(&loaded.spec);
+    // Stand in for two certificates a real operator would present, so the
+    // generator explores rollback paths instead of skipping them.
+    net.present_evidence(["sha256:PRIOR01".to_string(), "sha256:PRIOR02".to_string()]);
+    net
 }
 
 #[test]

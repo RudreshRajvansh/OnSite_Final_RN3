@@ -16,6 +16,7 @@ pub struct CompiledTransition {
     pub consumes: Vec<usize>,
     pub produces: Vec<usize>,
     pub binds: Vec<String>,
+    pub attested_binds: Vec<String>,
     pub guard: Option<String>,
     pub emits: Vec<EffectTemplate>,
 }
@@ -29,6 +30,7 @@ pub struct Net {
     pub finals: Vec<usize>,
     pub initial: Marking,
     pub transitions: Vec<CompiledTransition>,
+    pub attested: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,6 +93,11 @@ pub enum Failure {
     GuardFalse {
         transition: String,
         guard: String,
+    },
+    NotAttested {
+        step: String,
+        var: String,
+        value: String,
     },
 }
 
@@ -165,6 +172,10 @@ impl Failure {
             Failure::GuardFalse { transition, guard } => {
                 format!("guard `{}` on transition `{}` is false", guard, transition)
             }
+            Failure::NotAttested { step, var, value } => format!(
+                "`{}` binds ${} to {} but no presented certificate attests that it was ever legally produced",
+                step, var, value
+            ),
         }
     }
 }
@@ -211,6 +222,12 @@ impl Net {
                     .filter_map(|p| place_index.get(p).copied())
                     .collect(),
                 binds: t.binds.keys().cloned().collect(),
+                attested_binds: t
+                    .binds
+                    .iter()
+                    .filter(|(_, mode)| **mode == wsl::BindMode::Attested)
+                    .map(|(name, _)| name.clone())
+                    .collect(),
                 guard: t.guard.clone(),
                 emits: t.emits.clone(),
             })
@@ -223,7 +240,26 @@ impl Net {
             finals,
             initial,
             transitions,
+            attested: BTreeSet::new(),
         }
+    }
+
+    pub fn present_evidence<I: IntoIterator<Item = String>>(&mut self, values: I) {
+        self.attested.extend(values);
+    }
+
+    pub fn check_attested(&self, t: &CompiledTransition, env: &Env) -> Result<(), Failure> {
+        for var in &t.attested_binds {
+            let value = env.get(var).map(String::as_str).unwrap_or("");
+            if !self.attested.contains(value) {
+                return Err(Failure::NotAttested {
+                    step: t.id.clone(),
+                    var: var.clone(),
+                    value: value.to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn transition_by_id(&self, id: &str) -> Option<&CompiledTransition> {
