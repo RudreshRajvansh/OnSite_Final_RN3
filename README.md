@@ -188,12 +188,12 @@ The accepted language is infinite. `test` returns the artifact token, so retry l
 unbounded, and a cyclic net cannot be an enumeration of allowed traces.
 
 ```
-$ maskedrunner permissiveness --depth 11
+$ maskedrunner permissiveness --depth 9
 DEPTH   DISTINCT EFFECT-GRAPH SHAPES
-  4       2          8       233
-  5       9          9       610
-  6       29        10      1552
-  7       85        11      2406+
+  3       1          7       161
+  4       5          8       441
+  5      18          9      1170+
+  6      56
 LANGUAGE  infinite: the net contains a cycle, so no depth bounds the accepted set
 ```
 
@@ -209,14 +209,14 @@ the implementation:
 
 ```
 $ maskedrunner mutate --observation fixtures/case2.json
-RESULT    0 of 13 single mutations remove the rejection
+RESULT    0 of 14 single mutations remove the rejection
           the rejection is over-determined: 1 pair(s) of clauses must both be relaxed
 MINIMAL RELAXATION
   drop-obligation:publish_standard/registry_write/derives_from
   loosen-arg:publish_standard/registry_write/digest
 ```
 
-One pair out of 78 removes it: the effect obligation and the `$digest` binding, which are the two
+One pair out of 91 removes it: the effect obligation and the `$digest` binding, which are the two
 halves of "the published digest must be one a preceding build minted".
 
 Two more attacks were written after the engine was frozen. Both are caught with no engine changes.
@@ -324,7 +324,7 @@ polynomial free-choice one, and the linter says so rather than hiding it.
 cargo test --workspace
 ```
 
-31 tests: spec lint, the four cases pinned with their exact witnesses, rejection robustness under
+35 tests: spec lint, the four cases pinned with their exact witnesses, rejection robustness under
 slack, single-use approval enforcement, the cap-js replay with its provenance control, the two
 held-out attacks, certificate-backed rollback and the three ways it can be abused, the GitHub
 adapter's real payload shapes, and the legal-trace fuzzer.
