@@ -27,11 +27,13 @@ rand = "0.8"
 clap = { version = "4", features = ["derive"] }
 axum = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
-tower-http = { version = "0.5", features = ["cors", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "fs", "catch-panic"] }
 proptest = "1"
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# Deliberately NOT panic = "abort". The API is a long-running network service,
+# and aborting would let a panic in one request kill the process for every
+# other caller. Unwinding lets the panic guard turn it into a 500 instead.

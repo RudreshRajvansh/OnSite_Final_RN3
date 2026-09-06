@@ -15,7 +15,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
 };
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::{catch_panic::CatchPanicLayer, cors::CorsLayer, services::ServeDir};
 
 struct SpecEntry {
     loaded: wsl::LoadedSpec,
@@ -725,6 +725,9 @@ async fn main() {
         .route("/api/live", post(post_live))
         .route("/api/onboard", post(post_onboard))
         .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
+        // A panic in one handler must not take the process down with it. This
+        // turns it into a 500 for that caller and leaves the server serving.
+        .layer(CatchPanicLayer::new())
         .layer(CorsLayer::permissive())
         .fallback_service(ServeDir::new(env_or("MASKEDRUNNER_WEB", "web")))
         .with_state(state);
