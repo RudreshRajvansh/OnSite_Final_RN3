@@ -41,6 +41,21 @@ fn not_found(message: String) -> (StatusCode, Json<Value>) {
     (StatusCode::NOT_FOUND, Json(json!({ "error": message })))
 }
 
+/// Run ids address files under the fixtures directory, so they must not be able
+/// to escape it. Anything outside this alphabet is rejected before it reaches
+/// the filesystem, and errors never echo a path back to the caller.
+fn safe_id(id: &str) -> Option<&str> {
+    let ok = !id.is_empty()
+        && id.len() <= 128
+        && id != "."
+        && id != ".."
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        && !id.contains("..");
+    ok.then_some(id)
+}
+
 fn slack_of(params: &HashMap<String, String>) -> usize {
     params
         .get("slack")
@@ -142,10 +157,13 @@ async fn get_run(
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let Some(id) = safe_id(&id) else {
+        return not_found("no such run".into()).into_response();
+    };
     let path = state.fixtures.join(format!("{}.json", id));
     let obs = match Observation::load(&path) {
         Ok(o) => o,
-        Err(e) => return not_found(e.to_string()).into_response(),
+        Err(_) => return not_found("no such run".into()).into_response(),
     };
     let mut body = evaluate(&state, &obs, slack_of(&params));
     body["id"] = json!(id);
@@ -157,10 +175,13 @@ async fn get_run_certificate(
     Path(id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let Some(id) = safe_id(&id) else {
+        return not_found("no such run".into()).into_response();
+    };
     let path = state.fixtures.join(format!("{}.json", id));
     let obs = match Observation::load(&path) {
         Ok(o) => o,
-        Err(e) => return not_found(e.to_string()).into_response(),
+        Err(_) => return not_found("no such run".into()).into_response(),
     };
     let slack = slack_of(&params);
     let outcome = verify(&state.net, &obs, VerifyOptions::for_observation(&obs, slack));
@@ -269,6 +290,9 @@ async fn post_onboard(
         .map(|d| format!("{} {}", d.code, d.message))
         .collect();
     let key = payload.name.clone();
+    if key.is_empty() || key.len() > 200 {
+        return bad_request("spec name must be 1..200 characters".into()).into_response();
+    }
     if sound {
         // Derive an adapter map from this workflow's own job names, so the
         // repository's runs resolve even when its jobs are named nothing like
@@ -305,11 +329,14 @@ async fn post_onboard(
         repo_map.jobs = jobs_map;
 
         let net = Net::compile(&loaded.spec);
-        state
-            .specs
-            .write()
-            .unwrap()
-            .insert(key.clone(), SpecEntry { loaded, net, map: Some(repo_map) });
+        let mut specs = state.specs.write().unwrap();
+        // Onboarding is unauthenticated in this build, so the registry is capped
+        // rather than allowed to grow without bound.
+        if specs.len() >= 256 && !specs.contains_key(&key) {
+            drop(specs);
+            return bad_request("spec registry is full".into()).into_response();
+        }
+        specs.insert(key.clone(), SpecEntry { loaded, net, map: Some(repo_map) });
     }
     Json(json!({
         "name": key,
@@ -459,18 +486,40 @@ async fn main() {
         }
     };
     let net = Net::compile(&loaded.spec);
-    // Extra specs the UI can verify against (e.g. the GitHub Actions pipeline).
+    // Every sound spec in the spec directory is available to verify against.
+    let spec_dir = PathBuf::from(env_or("MASKEDRUNNER_SPECS", "spec"));
     let mut specs: HashMap<String, SpecEntry> = HashMap::new();
-    for (name, path) in [
-        ("release", "spec/release.wsl.yaml"),
-        ("gha-release", "spec/gha-release.wsl.yaml"),
-        ("heartbeat", "spec/heartbeat.wsl.yaml"),
-    ] {
-        if let Ok(l) = wsl::load_checked(path) {
-            let n = Net::compile(&l.spec);
-            specs.insert(name.to_string(), SpecEntry { loaded: l, net: n, map: None });
+    if let Ok(entries) = std::fs::read_dir(&spec_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.to_string_lossy().ends_with(".wsl.yaml") {
+                continue;
+            }
+            let Some(name) = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(|f| f.trim_end_matches(".wsl.yaml").to_string())
+            else {
+                continue;
+            };
+            match wsl::load_checked(&path) {
+                Ok(l) => {
+                    let n = Net::compile(&l.spec);
+                    specs.insert(name, SpecEntry { loaded: l, net: n, map: None });
+                }
+                Err(e) => eprintln!("skipping unsound spec {}: {}", path.display(), e),
+            }
         }
     }
+    if specs.is_empty() {
+        eprintln!("error: no sound spec found in {}", spec_dir.display());
+        std::process::exit(2);
+    }
+    eprintln!(
+        "loaded {} spec(s): {}",
+        specs.len(),
+        specs.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
     let map = adapters::load_map("spec/live.map.json")
         .or_else(|_| adapters::load_map("spec/gha.map.json"))
         .or_else(|_| adapters::load_map("spec/adapter.map.json"))
@@ -505,6 +554,7 @@ async fn main() {
         .route("/api/ingest", post(post_ingest))
         .route("/api/live", post(post_live))
         .route("/api/onboard", post(post_onboard))
+        .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .fallback_service(ServeDir::new(env_or("MASKEDRUNNER_WEB", "web")))
         .with_state(state);
