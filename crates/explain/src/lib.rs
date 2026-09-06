@@ -2,8 +2,8 @@ pub mod certificate;
 pub mod mus;
 
 pub use certificate::{
-    sign, verify_signature, Certificate, CertificateError, SignedCertificate, CERTIFICATE_KIND,
-    SIGNING_KEY_ENV,
+    check_trusted, public_key_of, sign, trust_anchor, verify_signature, Certificate,
+    CertificateError, SignedCertificate, CERTIFICATE_KIND, SIGNING_KEY_ENV, TRUSTED_KEYS_ENV,
 };
 pub use mus::{extract, MusOptions, MusResult};
 

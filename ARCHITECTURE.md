@@ -322,7 +322,21 @@ to reachability — it is an ordinary transition whose binding source happens to
 a signature rather than a compiler. The restore produces both `artifact` and
 `tested`, because that is precisely what the certificate proves already happened.
 
-Three properties fall out, and each has a test:
+Making certificates an **input** changed their security requirements, and the first
+implementation missed it. `verify_signature` reads the public key out of the
+certificate it is checking, which is correct for detecting edits and useless for
+establishing authorship: anyone can generate a keypair, write a certificate
+attesting any digest, and sign it validly. As output that was harmless — you hand
+a certificate to someone who already knows your key. As input it was a privilege
+escalation, and a held-out attack fixture accepted under it.
+
+Evidence is now believed only from a configured issuer (`MASKEDRUNNER_TRUSTED_KEYS`
+or `--trusted-key`, plus the verifier's own signing key). With no issuer
+configured nothing is believed, so the failure mode is refusal rather than trust.
+A refusal is exit 2, not exit 1: the verifier could not establish evidence, which
+is not the same as deciding the run is illegal.
+
+Three further properties fall out, and each has a test:
 
 - with no certificate, the restore cannot fire at all, and the rejection names
   the missing evidence rather than blaming the publish

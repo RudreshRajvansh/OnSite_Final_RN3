@@ -36,6 +36,8 @@ enum Command {
         certificate: Option<PathBuf>,
         #[arg(long)]
         evidence: Vec<PathBuf>,
+        #[arg(long)]
+        trusted_key: Vec<String>,
     },
     Permissiveness {
         #[arg(long, default_value = DEFAULT_SPEC)]
@@ -109,7 +111,8 @@ fn main() -> ExitCode {
             json,
             certificate,
             evidence,
-        } => run_verify(spec, observation, slack, json, certificate, evidence),
+            trusted_key,
+        } => run_verify(spec, observation, slack, json, certificate, evidence, trusted_key),
         Command::Permissiveness {
             spec,
             depth,
@@ -163,14 +166,20 @@ fn run_lint(path: PathBuf) -> ExitCode {
 struct PresentedEvidence {
     run_id: String,
     digests: Vec<String>,
+    issuer: String,
 }
 
-fn load_evidence(path: &PathBuf, workflow: &str) -> Result<PresentedEvidence, String> {
+fn load_evidence(
+    path: &PathBuf,
+    workflow: &str,
+    trusted: &std::collections::BTreeSet<String>,
+) -> Result<PresentedEvidence, String> {
     let body = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let signed: SignedCertificate =
         serde_json::from_str(&body).map_err(|e| format!("{}: {}", path.display(), e))?;
 
     verify_signature(&signed).map_err(|e| format!("{}: {}", path.display(), e))?;
+    explain::check_trusted(&signed, trusted).map_err(|e| format!("{}: {}", path.display(), e))?;
 
     let recomputed = signed
         .certificate
@@ -206,6 +215,7 @@ fn load_evidence(path: &PathBuf, workflow: &str) -> Result<PresentedEvidence, St
     Ok(PresentedEvidence {
         run_id: signed.certificate.run_id.clone(),
         digests: signed.certificate.attested_digests,
+        issuer: signed.public_key,
     })
 }
 
@@ -216,6 +226,7 @@ fn run_verify(
     json: bool,
     certificate: Option<PathBuf>,
     evidence: Vec<PathBuf>,
+    trusted_key: Vec<String>,
 ) -> ExitCode {
     let loaded = match wsl::load_checked(&spec) {
         Ok(l) => l,
@@ -227,15 +238,16 @@ fn run_verify(
     };
     let mut net = Net::compile(&loaded.spec);
 
+    let trusted = explain::trust_anchor(&trusted_key);
     for path in &evidence {
-        match load_evidence(path, &loaded.spec.workflow) {
+        match load_evidence(path, &loaded.spec.workflow, &trusted) {
             Ok(presented) => {
                 if !json {
                     println!(
-                        "EVIDENCE  {} attests {} [{}]",
+                        "EVIDENCE  {} attests {} [issuer {}]",
                         presented.run_id,
                         presented.digests.join(", "),
-                        path.display()
+                        &presented.issuer[..16]
                     );
                 }
                 net.present_evidence(presented.digests);
@@ -789,13 +801,26 @@ fn run_check(path: PathBuf) -> ExitCode {
     };
     match verify_signature(&signed) {
         Ok(()) => {
-            println!("SIGNATURE VALID");
+            println!("SIGNATURE VALID   (the document has not been edited)");
             println!("KEY       {}", signed.public_key);
+            println!(
+                "ISSUER    {}",
+                match explain::check_trusted(&signed, &explain::trust_anchor(&[])) {
+                    Ok(()) => "trusted".to_string(),
+                    Err(e) => format!("NOT TRUSTED - {}", e),
+                }
+            );
             println!("PAYLOAD   sha256:{}", signed.payload_sha256);
             println!("VERDICT   {}", signed.certificate.verdict.to_uppercase());
             println!("WORKFLOW  {}", signed.certificate.workflow);
             println!("SPEC      {}", signed.certificate.spec_hash);
             println!("RUN       {}", signed.certificate.run_id);
+            if !signed.certificate.attested_digests.is_empty() {
+                println!(
+                    "ATTESTS   {}",
+                    signed.certificate.attested_digests.join(", ")
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(e) => fail(&e.to_string()),

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 pub const CERTIFICATE_KIND: &str = "maskedrunner.non-reachability-certificate/v1";
 pub const SIGNING_KEY_ENV: &str = "MASKEDRUNNER_SIGNING_KEY";
+pub const TRUSTED_KEYS_ENV: &str = "MASKEDRUNNER_TRUSTED_KEYS";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Certificate {
@@ -44,6 +45,8 @@ pub enum CertificateError {
     BadKey(String),
     BadSignature(String),
     Encoding(String),
+    Untrusted(String),
+    NoTrustAnchor,
 }
 
 impl std::fmt::Display for CertificateError {
@@ -52,6 +55,16 @@ impl std::fmt::Display for CertificateError {
             CertificateError::BadKey(m) => write!(f, "signing key is unusable: {}", m),
             CertificateError::BadSignature(m) => write!(f, "signature does not verify: {}", m),
             CertificateError::Encoding(m) => write!(f, "certificate encoding failed: {}", m),
+            CertificateError::Untrusted(k) => write!(
+                f,
+                "certificate is signed by {} which is not a trusted issuer. A valid signature only proves the document was not edited; it says nothing about who wrote it",
+                k
+            ),
+            CertificateError::NoTrustAnchor => write!(
+                f,
+                "no trusted issuer is configured, so no certificate can be believed. Set {} to the hex public key(s) you trust, or pass --trusted-key",
+                TRUSTED_KEYS_ENV
+            ),
         }
     }
 }
@@ -106,6 +119,50 @@ pub fn sign(certificate: Certificate) -> Result<SignedCertificate, CertificateEr
         public_key: hex::encode(key.verifying_key().to_bytes()),
         signature: hex::encode(signature.to_bytes()),
     })
+}
+
+pub fn public_key_of(key: &SigningKey) -> String {
+    hex::encode(key.verifying_key().to_bytes())
+}
+
+pub fn trust_anchor(extra: &[String]) -> std::collections::BTreeSet<String> {
+    let mut set = std::collections::BTreeSet::new();
+    let mut add = |raw: &str| {
+        for part in raw.split([',', ';', ' ', '\n', '\t']) {
+            let part = part.trim().to_ascii_lowercase();
+            if !part.is_empty() {
+                set.insert(part);
+            }
+        }
+    };
+    if let Ok(raw) = std::env::var(TRUSTED_KEYS_ENV) {
+        add(&raw);
+    }
+    for key in extra {
+        add(key);
+    }
+    if let Ok(raw) = std::env::var(SIGNING_KEY_ENV) {
+        if let Ok(bytes) = hex::decode(raw.trim()) {
+            if let Ok(bytes) = <[u8; 32]>::try_from(bytes) {
+                set.insert(public_key_of(&SigningKey::from_bytes(&bytes)));
+            }
+        }
+    }
+    set
+}
+
+pub fn check_trusted(
+    signed: &SignedCertificate,
+    trusted: &std::collections::BTreeSet<String>,
+) -> Result<(), CertificateError> {
+    if trusted.is_empty() {
+        return Err(CertificateError::NoTrustAnchor);
+    }
+    if trusted.contains(&signed.public_key.to_ascii_lowercase()) {
+        Ok(())
+    } else {
+        Err(CertificateError::Untrusted(signed.public_key.clone()))
+    }
 }
 
 pub fn verify_signature(signed: &SignedCertificate) -> Result<(), CertificateError> {

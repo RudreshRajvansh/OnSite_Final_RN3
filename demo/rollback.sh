@@ -43,4 +43,21 @@ beat "4  The attack: roll back a digest that never existed."
 echo
 echo "  Rejected. A certificate is evidence for the digest it names"
 echo "  and nothing else. It is not a skip button."
+read -rp "  [enter] "
+
+beat "5  The harder attack: forge your own certificate."
+FORGED="${TMPDIR:-/tmp}/maskedrunner-forged.cert.json"
+ATTACKER_RUN="${TMPDIR:-/tmp}/maskedrunner-attacker.json"
+sed 's/sha256:AA11/sha256:DEAD/g; s/case1-legitimate/attacker-run/' fixtures/case1.json > "$ATTACKER_RUN"
+echo "  The attacker runs a pipeline of their own for sha256:DEAD and signs"
+echo "  the result with a key they generated. The signature is real."
+echo
+MASKEDRUNNER_SIGNING_KEY=abababababababababababababababababababababababababababababababab \
+  "$BIN" verify --observation "$ATTACKER_RUN" --certificate "$FORGED" | head -2
+echo
+"$BIN" verify --observation fixtures/case5-rollback-forged.json --evidence "$FORGED"
+echo
+echo "  Refused, and note the exit code is 2, not 1: no verdict was reached."
+echo "  A valid signature only proves the document was not edited. It says"
+echo "  nothing about who wrote it, so the issuer has to be one we trust."
 echo

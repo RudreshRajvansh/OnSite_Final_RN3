@@ -135,6 +135,25 @@ VERDICT   REJECT  (robust: holds at maximum slack)
 Edit the certificate to name a digest it never saw and it stops verifying at the signature, which
 is exit 2 — no verdict reached — rather than a rejection.
 
+Forging a whole certificate does not work either, and this is the part worth reading closely. A
+signature proves the document was not edited after signing. It says nothing about **who signed it**,
+so an attacker can generate a keypair, write a certificate attesting anything, and sign it validly.
+Evidence is therefore only believed from a configured issuer:
+
+```bash
+export MASKEDRUNNER_TRUSTED_KEYS=<hex public key>   # or: --trusted-key <hex>
+```
+
+```
+$ maskedrunner verify --observation fixtures/case5-rollback-forged.json --evidence forged.cert.json
+error: certificate is signed by 248acbdb... which is not a trusted issuer. A valid signature only
+proves the document was not edited; it says nothing about who wrote it
+```
+
+With no issuer configured, no certificate is believed at all. The verifier fails closed rather than
+treating self-signed evidence as evidence. `maskedrunner check` reports the issuer's trust status
+alongside the signature, because "signature valid" and "issuer trusted" are two different claims.
+
 The visualiser has the same flow. A run that needs evidence says so and offers the certificates
 that would settle it; presenting one flips the verdict in place. The offer only lists runs whose
 certificate actually attests something, and presenting the wrong one changes nothing.
