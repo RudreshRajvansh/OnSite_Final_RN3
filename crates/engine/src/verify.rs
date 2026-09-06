@@ -50,9 +50,19 @@ pub struct WitnessStep {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct Blocked {
+    pub record: String,
+    pub step: String,
+    pub principal: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct VerifyOutcome {
     pub verdict: Verdict,
     pub witness: Option<Vec<WitnessStep>>,
+    pub explained: Vec<WitnessStep>,
+    pub observed_steps: usize,
+    pub blocked: Option<Blocked>,
     pub failures: Vec<Failure>,
     pub bound: usize,
     pub slack: usize,
@@ -68,13 +78,20 @@ impl VerifyOutcome {
     pub fn witness_path(&self) -> String {
         self.witness
             .as_ref()
-            .map(|w| {
-                w.iter()
-                    .map(|s| s.transition.clone())
-                    .collect::<Vec<String>>()
-                    .join(" -> ")
-            })
+            .map(|w| Self::render_path(w))
             .unwrap_or_default()
+    }
+
+    pub fn explained_path(&self) -> String {
+        Self::render_path(&self.explained)
+    }
+
+    fn render_path(steps: &[WitnessStep]) -> String {
+        steps
+            .iter()
+            .map(|s| s.transition.clone())
+            .collect::<Vec<String>>()
+            .join(" -> ")
     }
 }
 
@@ -119,11 +136,16 @@ impl FailureLog {
 pub fn verify(net: &Net, obs: &Observation, options: VerifyOptions) -> VerifyOutcome {
     let mut log = FailureLog::default();
 
+    let observed_steps = obs.step_records().len();
+
     let edge_failures = check_edges(&net.spec, obs);
     if !edge_failures.is_empty() {
         return VerifyOutcome {
             verdict: Verdict::Reject,
             witness: None,
+            explained: Vec::new(),
+            observed_steps,
+            blocked: None,
             failures: edge_failures,
             bound: options.bound,
             slack: options.slack,
@@ -185,7 +207,10 @@ pub fn verify(net: &Net, obs: &Observation, options: VerifyOptions) -> VerifyOut
         if complete && net.is_final(&state.marking) {
             return VerifyOutcome {
                 verdict: Verdict::Accept,
-                witness: Some(state.path),
+                witness: Some(state.path.clone()),
+                explained: state.path,
+                observed_steps,
+                blocked: None,
                 failures: Vec::new(),
                 bound: options.bound,
                 slack: options.slack,
@@ -232,9 +257,22 @@ pub fn verify(net: &Net, obs: &Observation, options: VerifyOptions) -> VerifyOut
         }
     }
 
+    let blocked = obs
+        .step_records()
+        .into_iter()
+        .find(|i| !best.consumed[*i])
+        .map(|i| Blocked {
+            record: obs.records[i].id.clone(),
+            step: obs.records[i].step.clone().unwrap_or_default(),
+            principal: obs.records[i].principal.clone(),
+        });
+
     VerifyOutcome {
         verdict: Verdict::Reject,
         witness: None,
+        explained: best.path,
+        observed_steps,
+        blocked,
         failures,
         bound: options.bound,
         slack: options.slack,

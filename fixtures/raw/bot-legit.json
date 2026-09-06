@@ -1,0 +1,52 @@
+{
+  "run_id": "deploy-bot-legit",
+  "repository": "acme/payments-api",
+  "runner": {
+    "jobs": [
+      {
+        "id": "job-4401",
+        "name": "checkout",
+        "actor": "ci-bot",
+        "ts": "2026-09-06T09:02:11Z",
+        "outputs": {}
+      },
+      {
+        "id": "job-4402",
+        "name": "build",
+        "actor": "ci-bot",
+        "ts": "2026-09-06T09:04:38Z",
+        "outputs": {
+          "digest": "sha256:7C41"
+        }
+      },
+      {
+        "id": "job-4403",
+        "name": "test",
+        "actor": "ci-bot",
+        "ts": "2026-09-06T09:09:02Z",
+        "outputs": {
+          "digest": "sha256:7C41"
+        }
+      }
+    ]
+  },
+  "registry": {
+    "events": [
+      {
+        "id": "reg-88120",
+        "ts": "2026-09-06T09:11:44Z",
+        "actor": "ci-bot",
+        "action": "publish",
+        "scope": "registry://prod/payments-api",
+        "digest": "sha256:7C41",
+        "provenance": {
+          "build_digest": "sha256:7C41",
+          "issuer": "https://token.actions.githubusercontent.com"
+        }
+      }
+    ]
+  },
+  "cloud_audit": {
+    "entries": []
+  }
+}

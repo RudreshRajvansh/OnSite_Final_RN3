@@ -1,0 +1,62 @@
+# GENERATED SKELETON. Review every TODO before trusting a verdict.
+# The job graph and identities are inferred from the workflow file.
+# A human must still add: digests, effect arguments, and the
+# `requires_relation` links that actually catch tampering.
+spec_version: 1
+workflow: release
+
+principals:
+  gha_runner:
+    class: service_account
+    id_pattern: "*"        # TODO restrict to your bot identity
+
+places:
+  - id: start
+    tokens:
+      - { type: repository, value: "*" }
+  - id: p_build
+    carries: [digest]
+  - id: p_publish
+    carries: [digest]
+  - id: p_test
+    carries: [digest]
+
+final: [p_publish]
+
+transitions:
+  - id: build
+    principal: gha_runner
+    consumes: [start]
+    produces: [p_build]
+    binds:
+      digest: fresh
+    emits:
+      - effect: artifact_create
+        digest: $digest
+
+  - id: publish
+    principal: gha_runner
+    consumes: [p_test]
+    produces: [p_publish]
+    emits:
+      - effect: registry_write
+        scope: "registry://prod/*"   # TODO tighten scope
+        digest: $digest
+        requires_relation:
+          - type: derives_from
+            target: artifact_create   # TODO name the producing build
+            bind: { digest: $digest }
+
+  - id: test
+    principal: gha_runner
+    consumes: [p_build]
+    produces: [p_test]
+    emits:
+      - effect: ci_report
+        digest: $digest
+
+relations:
+  derives_from:
+    from: registry_write
+    to: artifact_create
+    constraint: "from.digest == to.digest"

@@ -1,0 +1,84 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: build
+        run: cargo build --release -p maskedrunner-cli
+
+      - name: digest
+        id: digest
+        run: |
+          DIGEST="sha256:$(sha256sum target/release/maskedrunner | cut -c1-16)"
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "$DIGEST"
+
+      - name: emit build facts
+        run: |
+          mkdir -p facts
+          cat > facts/build.json <<EOF
+          { "step": "build", "digest": "${{ steps.digest.outputs.digest }}" }
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: facts-build
+          path: facts/build.json
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: emit test facts
+        run: |
+          mkdir -p facts
+          cat > facts/test.json <<EOF
+          { "step": "test", "digest": "${{ needs.build.outputs.digest }}" }
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: facts-test
+          path: facts/test.json
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: publish
+        run: |
+          mkdir -p facts
+          cat > facts/publish.json <<EOF
+          {
+            "step": "publish",
+            "digest": "${{ needs.build.outputs.digest }}",
+            "scope": "registry://prod/maskedrunner",
+            "provenance": { "build_digest": "${{ needs.build.outputs.digest }}" }
+          }
+          EOF
+          cat facts/publish.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: facts-publish
+          path: facts/publish.json

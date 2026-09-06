@@ -35,13 +35,13 @@ pub fn explain(
                 .map(|(name, _)| name.clone())
                 .collect();
             notes.push(format!(
-                "rejection depends on the completeness assumption for plane(s) [{}]: under an open world where any step may go unlogged, the observation becomes reachable",
+                "this rejection holds only because plane(s) [{}] are declared complete. If any step may go unlogged, the observation is reachable",
                 complete.join(", ")
             ));
         }
         if !core.minimal {
             notes.push(
-                "core could not be reduced to a locally minimal set within the oracle budget"
+                "the core could not be reduced to a locally minimal set within the oracle budget"
                     .to_string(),
             );
         }

@@ -1,0 +1,96 @@
+{
+  "planes": {
+    "runner": {
+      "complete": true,
+      "carries": [
+        "vcs_read",
+        "artifact_create",
+        "ci_report"
+      ]
+    },
+    "registry": {
+      "complete": true,
+      "carries": [
+        "registry_write"
+      ]
+    },
+    "secrets": {
+      "complete": true,
+      "carries": [
+        "secret_read"
+      ]
+    }
+  },
+  "runner_principal": "${actor}@github",
+  "jobs": {
+    "checkout": {
+      "step": "checkout",
+      "effects": [
+        {
+          "kind": "vcs_read",
+          "args": {
+            "scope": "repo/${repository_name}"
+          }
+        }
+      ]
+    },
+    "stamp": {
+      "step": "stamp",
+      "effects": [
+        {
+          "kind": "vcs_read",
+          "args": {
+            "scope": "repo/${repository_name}"
+          }
+        }
+      ]
+    },
+    "commit": {
+      "step": "commit",
+      "effects": [
+        {
+          "kind": "vcs_read",
+          "args": {
+            "scope": "repo/${repository_name}"
+          }
+        }
+      ]
+    },
+    "build": {
+      "step": "build",
+      "effects": [
+        {
+          "kind": "artifact_create",
+          "args": {
+            "digest": "${outputs.digest}"
+          }
+        }
+      ]
+    },
+    "test": {
+      "step": "test",
+      "effects": [
+        {
+          "kind": "ci_report",
+          "args": {
+            "digest": "${outputs.digest}"
+          }
+        }
+      ]
+    },
+    "publish": {
+      "step": "publish",
+      "effects": [
+        {
+          "kind": "registry_write",
+          "args": {
+            "scope": "registry://prod/${repository_name}",
+            "digest": "${outputs.digest}"
+          }
+        }
+      ]
+    }
+  },
+  "registry_actions": {},
+  "audit_actions": {}
+}

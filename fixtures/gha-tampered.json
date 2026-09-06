@@ -1,0 +1,105 @@
+{
+  "run_id": "gha-release-19284736501",
+  "planes": {
+    "audit": {
+      "complete": true,
+      "carries": [
+        "approval_issued"
+      ]
+    },
+    "registry": {
+      "complete": true,
+      "carries": [
+        "registry_write"
+      ]
+    },
+    "runner": {
+      "complete": true,
+      "carries": [
+        "vcs_read",
+        "artifact_create",
+        "ci_report"
+      ]
+    }
+  },
+  "records": [
+    {
+      "id": "gha-54891002-2",
+      "plane": "runner",
+      "principal": "RudreshRajvansh@github",
+      "step": "checkout",
+      "ts": "2026-09-05T21:14:16Z",
+      "effects": [
+        {
+          "id": "gha-54891002-2.0",
+          "kind": "vcs_read",
+          "scope": "repo/OnSite_Final_RN3"
+        }
+      ]
+    },
+    {
+      "id": "gha-54891002-3",
+      "plane": "runner",
+      "principal": "RudreshRajvansh@github",
+      "step": "build",
+      "ts": "2026-09-05T21:14:22Z",
+      "effects": [
+        {
+          "id": "gha-54891002-3.0",
+          "kind": "artifact_create",
+          "digest": "sha256:9e3f1a7c2b8d4056"
+        }
+      ]
+    },
+    {
+      "id": "gha-54891119-2",
+      "plane": "runner",
+      "principal": "RudreshRajvansh@github",
+      "step": "checkout",
+      "ts": "2026-09-05T21:16:59Z",
+      "effects": [
+        {
+          "id": "gha-54891119-2.0",
+          "kind": "vcs_read",
+          "scope": "repo/OnSite_Final_RN3"
+        }
+      ]
+    },
+    {
+      "id": "gha-54891119-3",
+      "plane": "runner",
+      "principal": "RudreshRajvansh@github",
+      "step": "test",
+      "ts": "2026-09-05T21:17:04Z",
+      "effects": [
+        {
+          "id": "gha-54891119-3.0",
+          "kind": "ci_report",
+          "digest": "sha256:9e3f1a7c2b8d4056"
+        }
+      ]
+    },
+    {
+      "id": "gha-54891240-2",
+      "plane": "runner",
+      "principal": "RudreshRajvansh@github",
+      "step": "publish",
+      "ts": "2026-09-05T21:18:42Z",
+      "effects": [
+        {
+          "id": "gha-54891240-2.0",
+          "kind": "registry_write",
+          "digest": "sha256:beefbeefbeefbeef",
+          "scope": "registry://prod/maskedrunner"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "derives_from",
+      "from": "gha-54891240-2.0",
+      "to": "gha-54891002-3.0"
+    }
+  ]
+}

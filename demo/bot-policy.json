@@ -1,0 +1,28 @@
+{
+  "identity": "*",
+  "description": "Any valid credential for the pipeline. The point of the demo: a stolen but genuine token passes every identity and permission check.",
+  "credential": {
+    "kind": "personal_access_token",
+    "id": "pat_7f3c9a21",
+    "issued": "2026-02-14T09:00:00Z",
+    "last_rotated": null
+  },
+  "allowed_actions": [
+    "vcs_read",
+    "artifact_create",
+    "ci_report",
+    "secret_read",
+    "registry_write"
+  ],
+  "allowed_scopes": [
+    "repo/*",
+    "secrets://prod/*",
+    "registry://prod/*"
+  ],
+  "allowed_steps": [
+    "checkout",
+    "build",
+    "test",
+    "publish"
+  ]
+}

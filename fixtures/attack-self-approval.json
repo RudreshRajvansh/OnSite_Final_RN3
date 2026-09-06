@@ -1,0 +1,91 @@
+{
+  "run_id": "attack-self-approval",
+  "planes": {
+    "runner": {
+      "complete": true,
+      "carries": [
+        "vcs_read",
+        "artifact_create",
+        "ci_report"
+      ]
+    },
+    "registry": {
+      "complete": true,
+      "carries": [
+        "registry_write"
+      ]
+    },
+    "audit": {
+      "complete": true,
+      "carries": [
+        "approval_issued"
+      ]
+    }
+  },
+  "records": [
+    {
+      "id": "r1",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "checkout",
+      "ts": "2026-09-05T22:41:00Z",
+      "effects": [
+        {
+          "id": "e1",
+          "kind": "vcs_read",
+          "scope": "repo/app"
+        }
+      ]
+    },
+    {
+      "id": "r2",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "build",
+      "ts": "2026-09-05T22:43:10Z",
+      "effects": [
+        {
+          "id": "e2",
+          "kind": "artifact_create",
+          "digest": "sha256:CC90"
+        }
+      ]
+    },
+    {
+      "id": "r3",
+      "plane": "audit",
+      "principal": "ci-bot@ci.internal",
+      "step": "grant_emergency_approval",
+      "ts": "2026-09-05T22:44:02Z",
+      "effects": [
+        {
+          "id": "e3",
+          "kind": "approval_issued",
+          "grant": "break_glass"
+        }
+      ]
+    },
+    {
+      "id": "r4",
+      "plane": "runner",
+      "principal": "ci-bot@ci.internal",
+      "step": "publish_breakglass",
+      "ts": "2026-09-05T22:44:30Z",
+      "effects": [
+        {
+          "id": "e4",
+          "kind": "registry_write",
+          "scope": "registry://prod/app",
+          "digest": "sha256:CC90"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "type": "derives_from",
+      "from": "e4",
+      "to": "e2"
+    }
+  ]
+}

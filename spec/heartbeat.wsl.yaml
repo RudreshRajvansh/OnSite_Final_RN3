@@ -1,0 +1,50 @@
+# GENERATED SKELETON. Review every TODO before trusting a verdict.
+# The job graph and identities are inferred from the workflow file.
+# A human must still add: digests, effect arguments, and the
+# `requires_relation` links that actually catch tampering.
+spec_version: 1
+workflow: heartbeat
+
+principals:
+  gha_runner:
+    class: service_account
+    id_pattern: "*"        # TODO restrict to your bot identity
+
+places:
+  - id: start
+    tokens:
+      - { type: repository, value: "*" }
+  - id: p_checkout
+  - id: p_commit
+  - id: p_stamp
+
+final: [p_commit]
+
+transitions:
+  - id: checkout
+    principal: gha_runner
+    consumes: [start]
+    produces: [p_checkout]
+    emits:
+      - effect: vcs_read
+        scope: "repo/*"
+
+  - id: commit
+    principal: gha_runner
+    consumes: [p_stamp]
+    produces: [p_commit]
+    emits:
+      - effect: vcs_read
+        scope: "repo/*"
+
+  - id: stamp
+    principal: gha_runner
+    consumes: [p_checkout]
+    produces: [p_stamp]
+    emits:
+      - effect: vcs_read
+        scope: "repo/*"
+
+# No build->publish pair detected, so no derives_from relation was
+# generated. This pipeline only reads and commits; anything it published
+# would be an effect with no producing transition, and rejected.

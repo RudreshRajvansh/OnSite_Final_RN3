@@ -1,3 +1,5 @@
+mod policy;
+
 use clap::{Parser, Subcommand};
 use engine::{permissiveness, verify, Net, Observation, VerifyOptions, VerifyOutcome};
 use explain::{explain, sign, verify_signature, Certificate, SignedCertificate};
@@ -6,6 +8,7 @@ use std::process::ExitCode;
 
 const DEFAULT_SPEC: &str = "spec/release.wsl.yaml";
 const DEFAULT_MAP: &str = "spec/adapter.map.json";
+const DEFAULT_POLICY: &str = "demo/bot-policy.json";
 
 #[derive(Parser)]
 #[command(name = "maskedrunner", version, about = "workflow integrity verification")]
@@ -46,6 +49,36 @@ enum Command {
         #[arg(long)]
         certificate: PathBuf,
     },
+    IngestActions {
+        #[arg(long)]
+        run: PathBuf,
+        #[arg(long)]
+        jobs: PathBuf,
+        #[arg(long)]
+        facts: Option<PathBuf>,
+        #[arg(long, default_value = DEFAULT_MAP)]
+        map: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Generate {
+        #[arg(long)]
+        workflow: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Scenario {
+        #[arg(long, default_value = DEFAULT_SPEC)]
+        spec: PathBuf,
+        #[arg(long, default_value = DEFAULT_MAP)]
+        map: PathBuf,
+        #[arg(long, default_value = DEFAULT_POLICY)]
+        policy: PathBuf,
+        #[arg(long, default_value = "fixtures/raw/bot-legit.json")]
+        legit: PathBuf,
+        #[arg(long, default_value = "fixtures/raw/bot-stolen.json")]
+        stolen: PathBuf,
+    },
     Mutate {
         #[arg(long, default_value = DEFAULT_SPEC)]
         spec: PathBuf,
@@ -82,6 +115,13 @@ fn main() -> ExitCode {
         } => run_permissiveness(spec, depth, cap, budget),
         Command::Check { certificate } => run_check(certificate),
         Command::Ingest { bundle, map, out } => run_ingest(bundle, map, out),
+        Command::IngestActions { run, jobs, facts, map, out } => {
+            run_ingest_actions(run, jobs, facts, map, out)
+        }
+        Command::Generate { workflow, out } => run_generate(workflow, out),
+        Command::Scenario { spec, map, policy, legit, stolen } => {
+            run_scenario(spec, map, policy, legit, stolen)
+        }
         Command::Mutate {
             spec,
             observation,
@@ -195,26 +235,27 @@ fn report(
         Some(false) => println!("VERDICT   {}  (explainable by unobserved steps)", verdict),
         None => println!("VERDICT   {}", verdict),
     }
+    if outcome.witness.is_none() && !outcome.explained.is_empty() {
+        println!(
+            "EXPLAINED {}      {} of {} observed steps",
+            outcome.explained_path(),
+            outcome.explained.iter().filter(|s| s.observed).count(),
+            outcome.observed_steps
+        );
+        for step in &outcome.explained {
+            print_step(step);
+        }
+    }
+    if let Some(blocked) = &outcome.blocked {
+        println!(
+            "BLOCKED   {:<26} {:<20} [{}]",
+            blocked.step, blocked.principal, blocked.record
+        );
+    }
     if let Some(witness) = &outcome.witness {
         println!("WITNESS   {}", outcome.witness_path());
         for step in witness {
-            let source = match &step.record {
-                Some(r) => r.clone(),
-                None => "unobserved".to_string(),
-            };
-            let bindings: Vec<String> = step
-                .bindings
-                .iter()
-                .filter(|(k, _)| !k.starts_with('_'))
-                .map(|(k, v)| format!("{}={}", k, v))
-                .collect();
-            println!(
-                "            {:<26} {:<20} [{}] {}",
-                step.transition,
-                step.principal,
-                source,
-                bindings.join(" ")
-            );
+            print_step(step);
         }
     }
     if !issued.minimal_unsatisfiable_set.is_empty() {
@@ -253,6 +294,26 @@ fn report(
     println!("STATES    {}", outcome.states_explored);
     println!("SPEC      {}", loaded.short_hash());
     println!("RUN       {}  sha256:{}", obs.run_id, &obs.hash()[..12]);
+}
+
+fn print_step(step: &engine::WitnessStep) {
+    let source = match &step.record {
+        Some(r) => r.clone(),
+        None => "unobserved".to_string(),
+    };
+    let bindings: Vec<String> = step
+        .bindings
+        .iter()
+        .filter(|(k, _)| !k.starts_with('_'))
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect();
+    println!(
+        "            {:<26} {:<20} [{}] {}",
+        step.transition,
+        step.principal,
+        source,
+        bindings.join(" ")
+    );
 }
 
 fn run_permissiveness(spec: PathBuf, depth: usize, cap: usize, budget: usize) -> ExitCode {
@@ -318,7 +379,7 @@ fn run_mutate(spec: PathBuf, observation: PathBuf, slack: usize) -> ExitCode {
         if baseline.accepted() { "ACCEPT" } else { "REJECT" }
     );
     if baseline.accepted() {
-        println!("Mutation testing measures which clause causes a rejection; this run is accepted.");
+        println!("Mutation testing only applies to a rejected run. This one is accepted.");
         return ExitCode::SUCCESS;
     }
 
@@ -395,6 +456,212 @@ fn run_mutate(spec: PathBuf, observation: PathBuf, slack: usize) -> ExitCode {
         println!("  {}", second.id);
         println!("    -> {}", first.description);
         println!("    -> {}", second.description);
+    }
+    ExitCode::SUCCESS
+}
+
+fn scenario_leg(
+    title: &str,
+    story: &str,
+    bundle: &PathBuf,
+    map: &adapters::AdapterMap,
+    policy: &policy::BotPolicy,
+    net: &Net,
+    slack: usize,
+) -> Option<bool> {
+    // Accept either a ready observation or a raw three-plane bundle.
+    let obs = match Observation::load(bundle) {
+        Ok(o) => o,
+        Err(_) => match adapters::load_bundle(bundle) {
+            Ok(b) => adapters::normalize(&b, map),
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return None;
+            }
+        },
+    };
+    println!();
+    println!("== {} ==", title);
+    println!("   {}", story);
+    println!();
+
+    let policy_outcome = policy::evaluate(policy, &obs);
+    println!(
+        "   IDENTITY AND PERMISSION CHECK   {} identities, {} actions",
+        policy_outcome.checked_identities, policy_outcome.checked_actions
+    );
+    if policy_outcome.allowed() {
+        println!("   -> ALLOWED. Every action is one this identity may perform.");
+    } else {
+        println!("   -> DENIED");
+        for f in &policy_outcome.findings {
+            println!("      {}  {}", f.subject, f.detail);
+        }
+    }
+
+    let options = VerifyOptions::for_observation(&obs, slack);
+    let outcome = verify(net, &obs, options);
+    println!();
+    println!("   REACHABILITY CHECK   (one unlogged step allowed)");
+    if outcome.accepted() {
+        println!("   -> ACCEPT. {}", outcome.witness_path());
+    } else {
+        println!("   -> REJECT");
+        if !outcome.explained.is_empty() {
+            println!("      legal so far: {}", outcome.explained_path());
+        }
+        if let Some(b) = &outcome.blocked {
+            println!("      blocked at:   {}", b.step);
+        }
+        for f in outcome.failures.iter().take(2) {
+            println!("      {}", f.render());
+        }
+    }
+    Some(outcome.accepted())
+}
+
+fn run_generate(workflow: PathBuf, out: Option<PathBuf>) -> ExitCode {
+    let raw = match std::fs::read_to_string(&workflow) {
+        Ok(r) => r,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let wf: wsl::generate::Workflow = match serde_yaml::from_str(&raw) {
+        Ok(w) => w,
+        Err(e) => return fail(&format!("not a GitHub Actions workflow: {}", e)),
+    };
+    let spec = wsl::generate::generate(&wf);
+    match out {
+        Some(path) => {
+            if let Err(e) = std::fs::write(&path, &spec) {
+                return fail(&e.to_string());
+            }
+            let jobs = wf.jobs.len();
+            eprintln!("GENERATED {} from {} job(s)", path.display(), jobs);
+            eprintln!("Now edit the TODO lines, then: maskedrunner lint --spec {}", path.display());
+        }
+        None => print!("{}", spec),
+    }
+    ExitCode::SUCCESS
+}
+
+fn run_scenario(
+    spec: PathBuf,
+    map: PathBuf,
+    policy_path: PathBuf,
+    legit: PathBuf,
+    stolen: PathBuf,
+) -> ExitCode {
+    let loaded = match wsl::load_checked(&spec) {
+        Ok(l) => l,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let map = match adapters::load_map(&map) {
+        Ok(m) => m,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let bot = match policy::load(&policy_path) {
+        Ok(p) => p,
+        Err(e) => return fail(&e),
+    };
+    let net = Net::compile(&loaded.spec);
+
+    println!("SERVICE ACCOUNT");
+    println!("   identity     {}", bot.identity);
+    println!(
+        "   credential   {} {}  issued {}",
+        bot.credential.kind, bot.credential.id, bot.credential.issued
+    );
+    println!(
+        "   rotated      {}",
+        bot.credential.last_rotated.clone().unwrap_or_else(|| "never".to_string())
+    );
+    println!("   may perform  {}", bot.allowed_actions.join(", "));
+    println!("   may write to {}", bot.allowed_scopes.join(", "));
+    println!("   {}", bot.description);
+
+    let a = scenario_leg(
+        "1. The pipeline runs normally",
+        "The service account runs its normal pipeline, start to finish.",
+        &legit,
+        &map,
+        &bot,
+        &net,
+        1,
+    );
+    let b = scenario_leg(
+        "2. The credential is stolen and used directly",
+        "Same identity, same permissions. The stolen token does something the pipeline never does.",
+        &stolen,
+        &map,
+        &bot,
+        &net,
+        1,
+    );
+
+    println!();
+    match (a, b) {
+        (Some(true), Some(false)) => {
+            println!("The permission check passed both runs. It is answering a different question:");
+            println!("may this identity do this? The answer is yes in both cases, because the");
+            println!("credential is real. Reachability asks whether the outcome was producible.");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            println!("Scenario did not produce the expected contrast; inspect the runs above.");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_ingest_actions(
+    run: PathBuf,
+    jobs: PathBuf,
+    facts: Option<PathBuf>,
+    map: PathBuf,
+    out: Option<PathBuf>,
+) -> ExitCode {
+    let map = match adapters::load_map(&map) {
+        Ok(m) => m,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let run = match adapters::github::load_run(&run) {
+        Ok(r) => r,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let jobs = match adapters::github::load_jobs(&jobs) {
+        Ok(j) => j,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let facts = match facts {
+        Some(path) => match adapters::github::load_facts(&path) {
+            Ok(f) => f,
+            Err(e) => return fail(&e.to_string()),
+        },
+        None => Vec::new(),
+    };
+    let obs = adapters::github::normalize(&run, &jobs, &facts, &map);
+    if let Err(e) = obs.validate() {
+        return fail(&e.to_string());
+    }
+    let body = match serde_json::to_string_pretty(&obs) {
+        Ok(b) => b,
+        Err(e) => return fail(&e.to_string()),
+    };
+    match out {
+        Some(path) => {
+            if let Err(e) = std::fs::write(&path, body) {
+                return fail(&e.to_string());
+            }
+            println!("RUN       {}", obs.run_id);
+            println!("SOURCE    GitHub Actions REST API");
+            println!(
+                "RECORDS   {} steps mapped to workflow transitions",
+                obs.step_records().len()
+            );
+            println!("EDGES     {}", obs.edges.len());
+            println!("WROTE     {}", path.display());
+        }
+        None => println!("{}", body),
     }
     ExitCode::SUCCESS
 }

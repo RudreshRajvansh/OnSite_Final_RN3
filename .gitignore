@@ -3,3 +3,6 @@ target/
 .DS_Store
 node_modules/
 out/
+
+# vendored third-party skill docs
+.claude/skills/

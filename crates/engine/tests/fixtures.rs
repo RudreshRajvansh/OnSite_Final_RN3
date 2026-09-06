@@ -124,3 +124,56 @@ fn capjs_with_genuine_provenance_is_accepted_under_slack() {
         relaxed.failures
     );
 }
+
+#[test]
+fn held_out_forged_provenance_edge_is_rejected() {
+    let outcome = run("attack-forged-provenance.json", 0);
+    assert!(!outcome.accepted());
+    let rendered: Vec<String> = outcome.failures.iter().map(|f| f.render()).collect();
+    assert!(
+        rendered
+            .iter()
+            .any(|f| f.contains("violates the declared constraint")),
+        "a fabricated relation edge must fail the relation schema: {:?}",
+        rendered
+    );
+}
+
+#[test]
+fn held_out_self_approval_is_rejected() {
+    let outcome = run("attack-self-approval.json", 0);
+    assert!(!outcome.accepted());
+    let rendered: Vec<String> = outcome.failures.iter().map(|f| f.render()).collect();
+    assert!(
+        rendered.iter().any(|f| f.contains("*@corp.example")),
+        "the service account may not issue its own approval: {:?}",
+        rendered
+    );
+}
+
+#[test]
+fn rejection_reports_the_longest_legal_prefix() {
+    let outcome = run("case2.json", 0);
+    assert!(!outcome.accepted());
+    let prefix: Vec<String> = outcome
+        .explained
+        .iter()
+        .map(|s| s.transition.clone())
+        .collect();
+    assert_eq!(prefix, vec!["checkout", "build", "test"]);
+    assert_eq!(outcome.observed_steps, 4);
+    let blocked = outcome.blocked.expect("a blocked step must be named");
+    assert_eq!(blocked.step, "publish_standard");
+    assert_eq!(blocked.record, "r4");
+}
+
+#[test]
+fn unmatched_effect_explains_every_step_and_blocks_none() {
+    let outcome = run("attack-capjs.json", 0);
+    assert!(!outcome.accepted());
+    assert_eq!(outcome.explained.len(), 3);
+    assert!(
+        outcome.blocked.is_none(),
+        "every recorded step is legal here; the effect is what has no cause"
+    );
+}

@@ -1,3 +1,5 @@
+mod policy;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -7,13 +9,22 @@ use axum::{
 };
 use engine::{permissiveness, verify, Net, Observation, VerifyOptions};
 use serde_json::{json, Value};
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::{Arc, RwLock}};
 use tower_http::{cors::CorsLayer, services::ServeDir};
+
+struct SpecEntry {
+    loaded: wsl::LoadedSpec,
+    net: Net,
+    map: Option<adapters::AdapterMap>,
+}
 
 struct AppState {
     loaded: wsl::LoadedSpec,
     net: Net,
     fixtures: PathBuf,
+    specs: RwLock<HashMap<String, SpecEntry>>,
+    map: adapters::AdapterMap,
+    policy: policy::BotPolicy,
 }
 
 type Shared = Arc<AppState>;
@@ -38,18 +49,25 @@ fn slack_of(params: &HashMap<String, String>) -> usize {
 }
 
 fn evaluate(state: &AppState, obs: &Observation, slack: usize) -> Value {
-    let outcome = verify(&state.net, obs, VerifyOptions::for_observation(obs, slack));
+    let mut v = evaluate_with(&state.loaded, &state.net, obs, slack);
+    let (allowed, findings) = policy::evaluate(&state.policy, obs);
+    v["permission"] = json!({ "allowed": allowed, "findings": findings });
+    v
+}
+
+fn evaluate_with(loaded: &wsl::LoadedSpec, net: &Net, obs: &Observation, slack: usize) -> Value {
+    let outcome = verify(net, obs, VerifyOptions::for_observation(obs, slack));
     let robust = if outcome.accepted() {
         None
     } else {
         let mut wide = VerifyOptions::for_observation(obs, obs.records.len() + 4);
         wide.max_states = 400_000;
-        Some(!verify(&state.net, obs, wide).accepted())
+        Some(!verify(net, obs, wide).accepted())
     };
     let certificate = explain::explain(
-        &state.net,
-        &state.loaded.spec.workflow,
-        &state.loaded.hash,
+        net,
+        &loaded.spec.workflow,
+        &loaded.hash,
         obs,
         &outcome,
         robust,
@@ -202,6 +220,204 @@ async fn post_ingest(
     Json(evaluate(&state, &obs, slack_of(&params))).into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct LivePayload {
+    run: serde_json::Value,
+    jobs: serde_json::Value,
+    #[serde(default)]
+    facts: serde_json::Value,
+    #[serde(default)]
+    spec: Option<String>,
+    #[serde(default)]
+    slack: Option<usize>,
+    #[serde(default)]
+    tamper: Option<TamperOp>,
+}
+
+#[derive(serde::Deserialize)]
+struct TamperOp {
+    step: String,
+    digest: String,
+}
+
+#[derive(serde::Deserialize)]
+struct OnboardPayload {
+    name: String,
+    workflow: String,
+}
+
+async fn post_onboard(
+    State(state): State<Shared>,
+    Json(payload): Json<OnboardPayload>,
+) -> impl IntoResponse {
+    let wf: wsl::generate::Workflow = match serde_yaml::from_str(&payload.workflow) {
+        Ok(w) => w,
+        Err(e) => return bad_request(format!("not a workflow file: {}", e)).into_response(),
+    };
+    let spec_yaml = wsl::generate::generate(&wf);
+    let loaded = match wsl::parse_str(&spec_yaml) {
+        Ok(l) => l,
+        Err(e) => return bad_request(format!("generated spec failed to parse: {}", e)).into_response(),
+    };
+    let sound = loaded.report.is_sound();
+    let jobs = wf.jobs.len();
+    let transitions = loaded.spec.transitions.len();
+    let diagnostics: Vec<String> = loaded
+        .report
+        .diagnostics
+        .iter()
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    let key = payload.name.clone();
+    if sound {
+        // Derive an adapter map from this workflow's own job names, so the
+        // repository's runs resolve even when its jobs are named nothing like
+        // the built-in vocabulary.
+        let mut jobs_map: std::collections::BTreeMap<String, adapters::StepRule> =
+            std::collections::BTreeMap::new();
+        for (job_name, job) in &wf.jobs {
+            let transition = wsl::generate::slug(job_name);
+            let effects = match wsl::generate::guess_effect(job) {
+                Some("artifact_create") => vec![adapters::EffectRule {
+                    kind: "artifact_create".into(),
+                    args: [("digest".to_string(), "${outputs.digest}".to_string())].into(),
+                }],
+                Some("registry_write") => vec![adapters::EffectRule {
+                    kind: "registry_write".into(),
+                    args: [
+                        ("scope".to_string(), "registry://prod/${repository_name}".to_string()),
+                        ("digest".to_string(), "${outputs.digest}".to_string()),
+                    ].into(),
+                }],
+                Some("ci_report") => vec![adapters::EffectRule {
+                    kind: "ci_report".into(),
+                    args: [("digest".to_string(), "${outputs.digest}".to_string())].into(),
+                }],
+                Some("vcs_read") => vec![adapters::EffectRule {
+                    kind: "vcs_read".into(),
+                    args: [("scope".to_string(), "repo/${repository_name}".to_string())].into(),
+                }],
+                _ => vec![],
+            };
+            jobs_map.insert(job_name.clone(), adapters::StepRule { step: transition, effects });
+        }
+        let mut repo_map = state.map.clone();
+        repo_map.jobs = jobs_map;
+
+        let net = Net::compile(&loaded.spec);
+        state
+            .specs
+            .write()
+            .unwrap()
+            .insert(key.clone(), SpecEntry { loaded, net, map: Some(repo_map) });
+    }
+    Json(json!({
+        "name": key,
+        "registered": sound,
+        "sound": sound,
+        "jobs": jobs,
+        "transitions": transitions,
+        "spec_yaml": spec_yaml,
+        "diagnostics": diagnostics,
+    }))
+    .into_response()
+}
+
+async fn post_live(
+    State(state): State<Shared>,
+    Json(payload): Json<LivePayload>,
+) -> impl IntoResponse {
+    let run: adapters::github::Run = match serde_json::from_value(payload.run) {
+        Ok(r) => r,
+        Err(e) => return bad_request(format!("run: {}", e)).into_response(),
+    };
+    let jobs: adapters::github::Jobs = match serde_json::from_value(payload.jobs) {
+        Ok(j) => j,
+        Err(e) => return bad_request(format!("jobs: {}", e)).into_response(),
+    };
+    let mut facts: Vec<adapters::github::Fact> = if payload.facts.is_null() {
+        Vec::new()
+    } else {
+        match serde_json::from_value(payload.facts) {
+            Ok(f) => f,
+            Err(e) => return bad_request(format!("facts: {}", e)).into_response(),
+        }
+    };
+    // Optional live tamper: rewrite one step's published digest, so the demo can
+    // flip a genuine run into an attack without editing files.
+    if let Some(t) = &payload.tamper {
+        for f in facts.iter_mut() {
+            if f.step == t.step {
+                f.digest = Some(t.digest.clone());
+                f.provenance = None;
+            }
+        }
+    }
+
+    // If the caller named an onboarded spec, normalize with that repo's own map.
+    let repo_map = payload
+        .spec
+        .as_ref()
+        .and_then(|n| state.specs.read().unwrap().get(n).and_then(|e| e.map.clone()));
+    let obs = adapters::github::normalize(
+        &run,
+        &jobs,
+        &facts,
+        repo_map.as_ref().unwrap_or(&state.map),
+    );
+    if let Err(e) = obs.validate() {
+        return bad_request(e.to_string()).into_response();
+    }
+    // Refuse to give a verdict when nothing in the run could be mapped to the
+    // model. Accepting an observation we did not understand is the worst
+    // possible failure for a verifier.
+    if obs.step_records().is_empty() {
+        return Json(json!({
+            "unverifiable": true,
+            "reason": format!(
+                "None of the {} job(s) in this run map to a transition in any known spec.                  Onboard this repository first, or its jobs use names the model does not declare                  (reusable workflows report jobs as \"caller / inner job\").",
+                jobs.jobs.len()
+            ),
+            "observation": obs,
+            "jobs_seen": jobs.jobs.iter().map(|j| j.name.clone()).collect::<Vec<String>>(),
+        }))
+        .into_response();
+    }
+
+    let specs = state.specs.read().unwrap();
+    let chosen: &SpecEntry = if let Some(e) = payload.spec.as_ref().and_then(|n| specs.get(n)) {
+        e
+    } else {
+        let steps: std::collections::BTreeSet<String> =
+            obs.records.iter().filter_map(|r| r.step.clone()).collect();
+        let mut best: Option<(&SpecEntry, isize)> = None;
+        for entry in specs.values() {
+            let ids: std::collections::BTreeSet<&str> =
+                entry.loaded.spec.transitions.iter().map(|t| t.id.as_str()).collect();
+            let covered = steps.iter().filter(|s| ids.contains(s.as_str())).count();
+            if covered == 0 { continue; }
+            let extra = ids.len().saturating_sub(covered);
+            let score = covered as isize * 10 - extra as isize;
+            if best.map(|(_, b)| score > b).unwrap_or(true) { best = Some((entry, score)); }
+        }
+        match best {
+            Some((e, _)) => e,
+            None => specs.get("release").or_else(|| specs.values().next())
+                .expect("at least one spec must be loaded"),
+        }
+    };
+    let loaded = &chosen.loaded;
+    let net = &chosen.net;
+    let slack = payload.slack.unwrap_or(1);
+    let mut body = evaluate_with(loaded, net, &obs, slack);
+    let (allowed, findings) = policy::evaluate(&state.policy, &obs);
+    body["permission"] = json!({ "allowed": allowed, "findings": findings });
+    body["id"] = json!(obs.run_id);
+    body["spec_used"] = json!(loaded.spec.workflow);
+    body["spec_def"] = json!(loaded.spec);
+    Json(body).into_response()
+}
+
 async fn get_permissiveness(
     State(state): State<Shared>,
     Query(params): Query<HashMap<String, String>>,
@@ -243,10 +459,40 @@ async fn main() {
         }
     };
     let net = Net::compile(&loaded.spec);
+    // Extra specs the UI can verify against (e.g. the GitHub Actions pipeline).
+    let mut specs: HashMap<String, SpecEntry> = HashMap::new();
+    for (name, path) in [
+        ("release", "spec/release.wsl.yaml"),
+        ("gha-release", "spec/gha-release.wsl.yaml"),
+        ("heartbeat", "spec/heartbeat.wsl.yaml"),
+    ] {
+        if let Ok(l) = wsl::load_checked(path) {
+            let n = Net::compile(&l.spec);
+            specs.insert(name.to_string(), SpecEntry { loaded: l, net: n, map: None });
+        }
+    }
+    let map = adapters::load_map("spec/live.map.json")
+        .or_else(|_| adapters::load_map("spec/gha.map.json"))
+        .or_else(|_| adapters::load_map("spec/adapter.map.json"))
+        .unwrap_or_default();
+
+    let policy = policy::load(env_or("MASKEDRUNNER_POLICY", "demo/bot-policy.json"))
+        .unwrap_or(policy::BotPolicy {
+            identity: String::new(),
+            allowed_actions: vec![
+                "vcs_read".into(), "artifact_create".into(), "ci_report".into(),
+                "secret_read".into(), "registry_write".into(),
+            ],
+            allowed_scopes: vec!["repo/*".into(), "secrets://prod/*".into(), "registry://prod/*".into()],
+        });
+
     let state: Shared = Arc::new(AppState {
         loaded,
         net,
         fixtures: PathBuf::from(env_or("MASKEDRUNNER_FIXTURES", "fixtures")),
+        specs: RwLock::new(specs),
+        map,
+        policy,
     });
 
     let app = Router::new()
@@ -257,6 +503,8 @@ async fn main() {
         .route("/api/permissiveness", get(get_permissiveness))
         .route("/api/verify", post(post_verify))
         .route("/api/ingest", post(post_ingest))
+        .route("/api/live", post(post_live))
+        .route("/api/onboard", post(post_onboard))
         .layer(CorsLayer::permissive())
         .fallback_service(ServeDir::new(env_or("MASKEDRUNNER_WEB", "web")))
         .with_state(state);

@@ -1,3 +1,4 @@
+pub mod generate;
 pub mod lint;
 pub mod model;
 

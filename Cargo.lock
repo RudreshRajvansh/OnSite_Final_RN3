@@ -540,6 +540,7 @@ dependencies = [
  "maskedrunner-wsl",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tower-http",
 ]
@@ -555,6 +556,7 @@ dependencies = [
  "maskedrunner-wsl",
  "serde",
  "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]

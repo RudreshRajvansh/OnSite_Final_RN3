@@ -15,4 +15,5 @@ maskedrunner-explain = { path = "../explain" }
 maskedrunner-adapters = { path = "../adapters" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 clap = { workspace = true }

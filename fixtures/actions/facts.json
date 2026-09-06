@@ -1,0 +1,10 @@
+[
+  { "step": "build", "digest": "sha256:9e3f1a7c2b8d4056" },
+  { "step": "test", "digest": "sha256:9e3f1a7c2b8d4056" },
+  {
+    "step": "publish",
+    "digest": "sha256:9e3f1a7c2b8d4056",
+    "scope": "registry://prod/maskedrunner",
+    "provenance": { "build_digest": "sha256:9e3f1a7c2b8d4056" }
+  }
+]

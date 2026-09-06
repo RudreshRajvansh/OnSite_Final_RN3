@@ -1,3 +1,5 @@
+pub mod github;
+
 use engine::{EffectInstance, Observation, ObservedEdge, Plane, Record};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -142,7 +144,7 @@ pub fn load_bundle(path: impl AsRef<std::path::Path>) -> Result<Bundle, AdapterE
     serde_json::from_str(&raw).map_err(|e| AdapterError::Parse(e.to_string()))
 }
 
-fn substitute(template: &str, context: &BTreeMap<String, String>) -> String {
+pub(crate) fn substitute(template: &str, context: &BTreeMap<String, String>) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("${") {
@@ -163,7 +165,7 @@ fn substitute(template: &str, context: &BTreeMap<String, String>) -> String {
     out
 }
 
-fn render_effects(
+pub(crate) fn render_effects(
     rules: &[EffectRule],
     context: &BTreeMap<String, String>,
     record_id: &str,
