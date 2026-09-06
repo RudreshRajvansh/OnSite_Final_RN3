@@ -63,11 +63,85 @@ fn slack_of(params: &HashMap<String, String>) -> usize {
         .unwrap_or(0)
 }
 
-fn evaluate(state: &AppState, obs: &Observation, slack: usize) -> Value {
-    let mut v = evaluate_with(&state.loaded, &state.net, obs, slack);
+/// Resolve one accepted run into the digests its certificate attests. The
+/// certificate is signed and its signature checked here rather than trusted,
+/// so the browser path exercises the same evidence chain the CLI does.
+fn present_from_run(state: &AppState, evidence_id: &str) -> Result<(Vec<String>, String), String> {
+    let Some(id) = safe_id(evidence_id) else {
+        return Err("no such run".to_string());
+    };
+    let obs = Observation::load(state.fixtures.join(format!("{}.json", id)))
+        .map_err(|_| "no such run".to_string())?;
+    let outcome = verify(&state.net, &obs, VerifyOptions::for_observation(&obs, 0));
+    // Bail before explaining. On a rejection `explain` extracts the minimal
+    // unsatisfiable set, which is the expensive part of the whole system, and a
+    // rejected run attests nothing anyway.
+    if !outcome.accepted() {
+        return Err(format!("run `{}` was not accepted, so it attests nothing", id));
+    }
+    let certificate = explain::explain(
+        &state.net,
+        &state.loaded.spec.workflow,
+        &state.loaded.hash,
+        &obs,
+        &outcome,
+        None,
+    );
+    let signed = explain::sign(certificate).map_err(|e| e.to_string())?;
+    explain::verify_signature(&signed).map_err(|e| e.to_string())?;
+    if signed.certificate.attested_digests.is_empty() {
+        return Err(format!("run `{}` attests no artifact digest", id));
+    }
+    Ok((
+        signed.certificate.attested_digests,
+        signed.certificate.run_id,
+    ))
+}
+
+fn evaluate(state: &AppState, obs: &Observation, slack: usize, evidence: Option<&str>) -> Value {
+    let mut net = state.net.clone();
+    let mut presented = Value::Null;
+    if let Some(from) = evidence.filter(|e| !e.is_empty()) {
+        presented = match present_from_run(state, from) {
+            Ok((digests, run_id)) => {
+                net.present_evidence(digests.clone());
+                json!({ "from": from, "run_id": run_id, "digests": digests })
+            }
+            Err(message) => json!({ "from": from, "error": message }),
+        };
+    }
+    let mut v = evaluate_with(&state.loaded, &net, obs, slack);
     let (allowed, findings) = policy::evaluate(&state.policy, obs);
     v["permission"] = json!({ "allowed": allowed, "findings": findings });
+    v["evidence"] = presented;
+    // Only price the catalogue when this run has something to say about it:
+    // building it verifies every fixture, which is wasted on a run that neither
+    // asks for evidence nor was given any.
+    let wants = v["certificate"]["failed_obligations"]
+        .as_array()
+        .is_some_and(|f| {
+            f.iter()
+                .filter_map(Value::as_str)
+                .any(|m| m.contains("no presented certificate attests"))
+        });
+    v["evidence_available"] = if wants || !v["evidence"].is_null() {
+        json!(evidence_runs(state))
+    } else {
+        json!([])
+    };
     v
+}
+
+/// Runs whose certificate would attest something, offered to the UI so a
+/// rejected rollback can name what it is missing.
+fn evidence_runs(state: &AppState) -> Vec<Value> {
+    fixture_ids(state)
+        .into_iter()
+        .filter_map(|id| {
+            let (digests, run_id) = present_from_run(state, &id).ok()?;
+            Some(json!({ "id": id, "run_id": run_id, "digests": digests }))
+        })
+        .collect()
 }
 
 fn evaluate_with(loaded: &wsl::LoadedSpec, net: &Net, obs: &Observation, slack: usize) -> Value {
@@ -165,7 +239,7 @@ async fn get_run(
         Ok(o) => o,
         Err(_) => return not_found("no such run".into()).into_response(),
     };
-    let mut body = evaluate(&state, &obs, slack_of(&params));
+    let mut body = evaluate(&state, &obs, slack_of(&params), params.get("evidence").map(String::as_str));
     body["id"] = json!(id);
     Json(body).into_response()
 }
@@ -184,16 +258,23 @@ async fn get_run_certificate(
         Err(_) => return not_found("no such run".into()).into_response(),
     };
     let slack = slack_of(&params);
-    let outcome = verify(&state.net, &obs, VerifyOptions::for_observation(&obs, slack));
+    let mut net = state.net.clone();
+    if let Some(from) = params.get("evidence").filter(|e| !e.is_empty()) {
+        match present_from_run(&state, from) {
+            Ok((digests, _)) => net.present_evidence(digests),
+            Err(message) => return bad_request(message).into_response(),
+        }
+    }
+    let outcome = verify(&net, &obs, VerifyOptions::for_observation(&obs, slack));
     let robust = if outcome.accepted() {
         None
     } else {
         let mut wide = VerifyOptions::for_observation(&obs, obs.records.len() + 4);
         wide.max_states = 400_000;
-        Some(!verify(&state.net, &obs, wide).accepted())
+        Some(!verify(&net, &obs, wide).accepted())
     };
     let certificate = explain::explain(
-        &state.net,
+        &net,
         &state.loaded.spec.workflow,
         &state.loaded.hash,
         &obs,
@@ -218,7 +299,7 @@ async fn post_verify(
     if let Err(e) = body.validate() {
         return bad_request(e.to_string()).into_response();
     }
-    Json(evaluate(&state, &body, slack_of(&params))).into_response()
+    Json(evaluate(&state, &body, slack_of(&params), params.get("evidence").map(String::as_str))).into_response()
 }
 
 async fn post_ingest(
@@ -238,7 +319,7 @@ async fn post_ingest(
     if let Err(e) = obs.validate() {
         return bad_request(e.to_string()).into_response();
     }
-    Json(evaluate(&state, &obs, slack_of(&params))).into_response()
+    Json(evaluate(&state, &obs, slack_of(&params), params.get("evidence").map(String::as_str))).into_response()
 }
 
 #[derive(serde::Deserialize)]

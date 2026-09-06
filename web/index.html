@@ -181,6 +181,31 @@
   .verdict .sum { display: block; margin-top: 6px; font-size: 14px; color: var(--text); max-width: 68ch; }
   .verdict .facts { display: block; margin-top: 8px; font: 400 11.5px var(--mono); color: var(--dim); }
 
+  /* evidence */
+  .evidence {
+    margin-top: 14px;
+    padding: 11px 13px;
+    background: var(--sunk);
+    border: 1px solid var(--hair);
+    border-left: 2px solid var(--accent);
+    border-radius: 6px;
+  }
+  .evidence .ev-lead { margin: 0; font-size: 13px; color: var(--text); max-width: 68ch; }
+  .evidence .ev-acts { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .evidence .ev-acts:empty { display: none; }
+  .evidence button {
+    padding: 5px 10px;
+    font: 400 11.5px var(--mono);
+    border: 1px solid var(--hair);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .evidence button:hover { border-color: var(--accent); color: var(--accent); }
+  .evidence button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .evidence .ev-digest { color: var(--dim); }
+
   /* graph */
   .graph {
     margin-top: 22px;
@@ -401,6 +426,11 @@
     <div class="verdict" id="verdict" role="status" aria-live="polite">
       <span class="word">Ready</span>
       <span class="sum">Select a run.</span>
+    </div>
+
+    <div class="evidence" id="evidence" hidden>
+      <p class="ev-lead" id="ev-lead"></p>
+      <div class="ev-acts" id="ev-acts"></div>
     </div>
 
     <div class="compare" id="compare" hidden>

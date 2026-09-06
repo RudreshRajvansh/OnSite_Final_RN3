@@ -135,6 +135,10 @@ VERDICT   REJECT  (robust: holds at maximum slack)
 Edit the certificate to name a digest it never saw and it stops verifying at the signature, which
 is exit 2 — no verdict reached — rather than a rejection.
 
+The visualiser has the same flow. A run that needs evidence says so and offers the certificates
+that would settle it; presenting one flips the verdict in place. The offer only lists runs whose
+certificate actually attests something, and presenting the wrong one changes nothing.
+
 ## Real incidents
 
 `fixtures/raw/` holds incidents as bundles of the three log planes. See

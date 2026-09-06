@@ -13,10 +13,12 @@ const CATALOG = [
   { group: "Required demonstrations", id: "case1", label: "Legitimate release" },
   { group: "Required demonstrations", id: "case2", label: "Malicious, every step valid" },
   { group: "Required demonstrations", id: "case3", label: "Unusual but permitted" },
+  { group: "Required demonstrations", id: "case4-rollback", label: "Rollback of a prior release" },
   { group: "Real incident", id: "attack-capjs", label: "cap-js, stolen token" },
   { group: "Real incident", id: "attack-capjs-provenance", label: "Same run, real provenance" },
   { group: "Held-out attacks", id: "attack-forged-provenance", label: "Forged provenance link" },
   { group: "Held-out attacks", id: "attack-self-approval", label: "Self-issued approval" },
+  { group: "Held-out attacks", id: "case5-rollback-forged", label: "Rollback of an artifact nobody built" },
 ];
 
 const state = {
@@ -609,17 +611,57 @@ function renderCert() {
   for (const [k, v] of rows) { kv.appendChild(html("dt", null, k)); kv.appendChild(html("dd", null, v)); }
 }
 
-async function selectRun(id) {
+function needsEvidence() {
+  const c = state.result && state.result.certificate;
+  if (!c) return false;
+  return (c.failed_obligations || []).some((f) => f.includes("no presented certificate attests"));
+}
+
+function renderEvidence() {
+  const box = document.getElementById("evidence");
+  const lead = document.getElementById("ev-lead");
+  const acts = document.getElementById("ev-acts");
+  acts.textContent = "";
+  const presented = state.result && state.result.evidence;
+  const offers = (state.result && state.result.evidence_available) || [];
+
+  if (!presented && !needsEvidence()) { box.hidden = true; return; }
+  box.hidden = false;
+
+  if (presented && presented.error) {
+    lead.textContent = `That certificate could not be used: ${presented.error}`;
+  } else if (presented) {
+    lead.textContent = `Presenting the certificate from ${presented.run_id}, which attests ${presented.digests.join(", ")}.`;
+  } else {
+    lead.textContent =
+      "This run republishes an artifact that no step here built. A signed certificate from the run that did build it would settle that.";
+  }
+
+  for (const offer of offers) {
+    const on = presented && presented.from === offer.id;
+    const b = html("button", null, "");
+    b.appendChild(document.createTextNode(on ? "Withdraw " : "Present "));
+    b.appendChild(html("span", "ev-digest", `${offer.id} · ${offer.digests.join(", ")}`));
+    b.setAttribute("aria-pressed", String(!!on));
+    b.onclick = () => selectRun(state.current, on ? null : offer.id);
+    acts.appendChild(b);
+  }
+}
+
+async function selectRun(id, evidence) {
   stopSim();
   state.current = id;
+  state.evidence = evidence === undefined ? null : evidence;
   state.netSpec = state.spec.spec;
   state.playhead = -1;
   state.showBlocked = true;
   for (const b of document.querySelectorAll(".run")) b.setAttribute("aria-current", String(b.dataset.id === id));
-  state.result = await api(`/api/runs/${id}?slack=${state.slack}`);
+  const ev = state.evidence ? `&evidence=${encodeURIComponent(state.evidence)}` : "";
+  state.result = await api(`/api/runs/${id}?slack=${state.slack}${ev}`);
   state.playhead = steps().length - 1;
   document.getElementById("play").disabled = steps().length === 0;
   renderVerdict();
+  renderEvidence();
   renderCompare();
   renderRibbon();
   renderNet();
@@ -850,7 +892,7 @@ async function boot() {
   document.getElementById("slack").addEventListener("input", (e) => {
     state.slack = Number(e.target.value);
     document.getElementById("slack-val").textContent = String(state.slack);
-    if (state.current) selectRun(state.current);
+    if (state.current) selectRun(state.current, state.evidence);
   });
   document.getElementById("play").addEventListener("click", () => (state.running ? stopSim() : simulate()));
   document.getElementById("perm").addEventListener("click", loadPerm);
@@ -871,7 +913,8 @@ async function boot() {
   });
   document.getElementById("sign").addEventListener("click", async () => {
     if (!state.current) return;
-    const signed = await api(`/api/runs/${state.current}/certificate?slack=${state.slack}`);
+    const ev = state.evidence ? `&evidence=${encodeURIComponent(state.evidence)}` : "";
+    const signed = await api(`/api/runs/${state.current}/certificate?slack=${state.slack}${ev}`);
     document.getElementById("cert-json").textContent = JSON.stringify(signed, null, 2);
   });
   document.addEventListener("keydown", (e) => {
