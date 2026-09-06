@@ -47,6 +47,10 @@ cargo build --release
 The service listens on `127.0.0.1:8787` and serves the visualiser from `web/`. Everything runs
 offline. There are no CDN or network dependencies anywhere in the stack.
 
+To see it block a genuine GitHub Actions run rather than a fixture, see
+[Running against a real pipeline](#running-against-a-real-pipeline) and the demo repository at
+[github.com/RudreshRajvansh/Demo_Repo-](https://github.com/RudreshRajvansh/Demo_Repo-).
+
 ## The four cases
 
 ### 1. Legitimate
@@ -263,6 +267,71 @@ the service nor its storage. It carries the spec hash, observation hash, bound, 
 the minimal unsatisfiable set and the failed obligations. Editing any field breaks the payload hash
 before the signature is even checked. Set `MASKEDRUNNER_SIGNING_KEY` to a 32-byte hex key, or an
 ephemeral key is generated for you.
+
+## Running against a real pipeline
+
+Everything above uses fixtures. The gate also runs against genuine GitHub Actions runs, on real
+runners, in a separate repository kept deliberately ordinary:
+
+**[github.com/RudreshRajvansh/Demo_Repo-](https://github.com/RudreshRajvansh/Demo_Repo-)**
+
+That repo is the pipeline under test. This repo is the verifier. They are kept apart on purpose:
+the verifier must be able to judge a pipeline it does not live in, using only what the Actions API
+reports, exactly as it would for someone else's repository.
+
+| In the demo repo | What it is |
+|---|---|
+| `.github/workflows/heartbeat.yml` | The normal pipeline. Every five minutes it checks out, stamps the README with the time, and commits. Three jobs: `checkout`, `stamp`, `commit`. |
+| `.github/workflows/hijack.yml` | The same three jobs plus a rogue `publish` job that reads a secret and writes to the registry. Same bot, same token, every step individually permitted. |
+| `.github/workflows/_verify.yml` | The gate. A reusable workflow both of the above call. |
+| `maskedrunner/heartbeat.wsl.yaml` | The declared model of the pipeline, generated from the workflow file and then reviewed. |
+
+### How a run gets verified
+
+The gate is a job inside the run it is judging, which means it always sees itself unfinished. Each
+step is separate so a failure names itself:
+
+1. **Check out the pipeline** under test, then `git clone` this repository. A plain clone, not
+   `actions/checkout` — the default `GITHUB_TOKEN` is scoped to the calling repo only, so checking
+   out a second repository needs a credential it does not have. A public repo clones with none.
+2. **Confirm the model is present.** No declared model means no verdict, and it says so rather than
+   guessing.
+3. **Fetch the run from the Actions API** and wait for every job except the gate to reach a terminal
+   state. The API lags behind `needs:` satisfaction — a job can be over while its conclusion still
+   reads `null` — and verifying that snapshot would silently drop the job and look like a rejection.
+4. **Normalize** the run into an observation using [`spec/live.map.json`](spec/live.map.json), which
+   maps job names to transitions and declares which effects each one emits.
+5. **Verify** against the declared model and exit on the contract below.
+
+Every step writes what it saw to `$GITHUB_STEP_SUMMARY` — the model hashes, the job table, the
+observation, and the verdict. The job log needs a token to read; the summary does not, so anyone
+looking at a failed run can see why it failed.
+
+```
+heartbeat  (normal run)
+  checkout success · stamp success · commit success
+  maskedrunner / verify success
+
+hijack  (rogue publish, same bot, valid token)
+  maskedrunner / verify failure
+  REJECTED: this run reached an outcome the declared workflow cannot produce
+```
+
+### Onboarding a repository you do not control
+
+`maskedrunner generate` reads a workflow file and emits a model skeleton: the job graph and the
+identities are inferred, and every place a human must still decide is marked `TODO`. It is a
+starting point, not a verdict — a generated model without review declares whatever the pipeline
+already does, including anything already wrong with it.
+
+```bash
+./target/release/maskedrunner generate --workflow .github/workflows/release.yml --out model.wsl.yaml
+./target/release/maskedrunner lint --spec model.wsl.yaml
+```
+
+The visualiser does the same thing from a repository URL, and because the GitHub REST API allows
+cross-origin reads for public repositories, the browser fetches the workflow directly. The verifier
+makes no outbound network call of its own.
 
 ### Blocking a pipeline
 
